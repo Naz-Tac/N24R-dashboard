@@ -4,6 +4,8 @@ import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import { Metadata } from "next";
 import React from "react";
 
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: "Next.js Line Chart | TailAdmin - Next.js Dashboard Template",
   description:
