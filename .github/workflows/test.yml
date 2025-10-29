@@ -30,13 +30,13 @@ jobs:
       - name: Build (install dev deps if needed)
         run: |
           # ensure TypeScript test can run
-          npm run build --if-present || true
+          npm run build || true
 
-      - name: Start Next.js dev server in background
+      - name: Start Next.js production server in background
         run: |
-          # Start dev server bound to localhost:3000
-          npm run dev -- --hostname 127.0.0.1 --port 3000 &
-          echo "Started dev server (background)"
+          # Build already run above; start the production server for stability in CI
+          npm run start -- -p 3000 -H 127.0.0.1 &
+          echo "Started production server (background)"
 
       - name: Wait for Next.js to be ready
         run: |
