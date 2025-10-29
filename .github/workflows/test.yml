@@ -35,20 +35,23 @@ jobs:
       - name: Start Next.js production server in background
         run: |
           # Build already run above; start the production server for stability in CI
-          npm run start -- -p 3000 -H 127.0.0.1 &
+          # Bind to 0.0.0.0 so it's reachable on the runner network
+          npm run start -- -p 3000 -H 0.0.0.0 &
           echo "Started production server (background)"
 
       - name: Wait for Next.js to be ready
         run: |
-          echo "Waiting up to 60s for http://localhost:3000 to respond..."
+          echo "Waiting up to 120s for http://localhost:3000 to respond..."
           SECONDS=0
           until curl -sS --fail http://localhost:3000 > /dev/null; do
             sleep 1
             SECONDS=$((SECONDS+1))
-            if [ "$SECONDS" -ge 60 ]; then
-              echo "Timeout waiting for Next.js to start after 60s"
+            if [ "$SECONDS" -ge 120 ]; then
+              echo "Timeout waiting for Next.js to start after 120s"
               echo "---- .dev.log (tail) ----"
               [ -f .dev.log ] && tail -n 200 .dev.log || true
+              # show netstat to help debug
+              ss -ltnp || true
               exit 1
             fi
           done
