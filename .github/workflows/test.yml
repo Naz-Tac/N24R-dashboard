@@ -35,11 +35,20 @@ jobs:
           npm run build || true
 
       - name: Start Next.js production server in background
+        env:
+          NODE_ENV: production
         run: |
           # Build already run above; start the production server for stability in CI
           # Bind to localhost for more reliable connections
-          npm run start -- -p 3000 --hostname localhost > .next.log 2>&1 &
+          NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 DEBUG=* npm run start -- -p 3000 --hostname localhost > .next.log 2>&1 &
           echo "Started production server (background)"
+          # Give process a moment to crash if it's going to
+          sleep 5
+          if ! ps aux | grep -v grep | grep "next start"; then
+            echo "❌ Server crashed immediately:"
+            cat .next.log
+            exit 1
+          fi
 
       - name: Wait for Next.js to be ready
         run: |
