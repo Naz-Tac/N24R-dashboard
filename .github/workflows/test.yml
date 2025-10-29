@@ -37,16 +37,19 @@ jobs:
       - name: Start Next.js production server in background
         run: |
           # Build already run above; start the production server for stability in CI
-          # Bind to 0.0.0.0 so it's reachable on the runner network
-          npm run start -- -p 3000 -H 0.0.0.0 > .next.log 2>&1 &
+          # Bind to localhost for more reliable connections
+          npm run start -- -p 3000 --hostname localhost > .next.log 2>&1 &
           echo "Started production server (background)"
 
       - name: Wait for Next.js to be ready
         run: |
-          echo "Waiting up to 240s for http://0.0.0.0:3000 ..."
-          npx wait-on http://0.0.0.0:3000 --timeout 240000 || (
-            echo "❌ Server did not respond within 240s. Printing .dev.log tail for debugging:"
-            tail -n 120 .dev.log || echo "No .dev.log found"
+          echo "Waiting up to 300s for http://localhost:3000 ..."
+          npx wait-on http://localhost:3000 --interval 2000 --timeout 300000 || (
+            echo "❌ Server did not respond within 300s. Printing logs for debugging:"
+            echo "---- .next.log ----"
+            tail -n 200 .next.log || echo "No .next.log found"
+            echo "---- .dev.log ----"
+            tail -n 200 .dev.log || echo "No .dev.log found"
             exit 1
           )
 
