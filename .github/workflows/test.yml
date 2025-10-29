@@ -7,25 +7,61 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    env:
+      NODE_ENV: development
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Run integration test
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npm run test:api
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - name: Build (install dev deps if needed)
+        run: |
+          # ensure TypeScript test can run
+          npm run build --if-present || true
+
+      - name: Start Next.js dev server in background
+        run: |
+          # Start dev server bound to localhost:3000
+          npm run dev -- --hostname 127.0.0.1 --port 3000 &
+          echo "Started dev server (background)"
+
+      - name: Wait for Next.js to be ready
+        run: |
+          echo "Waiting up to 60s for http://localhost:3000 to respond..."
+          SECONDS=0
+          until curl -sS --fail http://localhost:3000 > /dev/null; do
+            sleep 1
+            SECONDS=$((SECONDS+1))
+            if [ "$SECONDS" -ge 60 ]; then
+              echo "Timeout waiting for Next.js to start after 60s"
+              echo "---- .dev.log (tail) ----"
+              [ -f .dev.log ] && tail -n 200 .dev.log || true
+              exit 1
+            fi
+          done
+          echo "Next.js ready"
+
+      - name: Run API integration tests
+        run: |
+          echo "Running npm run test:api"
+          npm run test:api
+
+      - name: Show Next.js logs (if any)
+        if: failure()
+        run: |
+          echo "---- .dev.log (tail) ----"
+          [ -f .dev.log ] && tail -n 200 .dev.log || true
 
     - name: Run API integration tests
       run: npm run test:api
