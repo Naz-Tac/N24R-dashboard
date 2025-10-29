@@ -24,8 +24,10 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci --include=dev
+      - name: Install dependencies and wait-on
+        run: |
+          npm ci --include=dev
+          npm install -g wait-on
 
       - name: Build (install dev deps if needed)
         run: |
@@ -36,25 +38,22 @@ jobs:
         run: |
           # Build already run above; start the production server for stability in CI
           # Bind to 0.0.0.0 so it's reachable on the runner network
-          npm run start -- -p 3000 -H 0.0.0.0 &
+          npm run start -- -p 3000 -H 0.0.0.0 > .next.log 2>&1 &
           echo "Started production server (background)"
 
       - name: Wait for Next.js to be ready
         run: |
-          echo "Waiting up to 120s for http://localhost:3000 to respond..."
-          SECONDS=0
-          until curl -sS --fail http://localhost:3000 > /dev/null; do
-            sleep 1
-            SECONDS=$((SECONDS+1))
-            if [ "$SECONDS" -ge 120 ]; then
-              echo "Timeout waiting for Next.js to start after 120s"
-              echo "---- .dev.log (tail) ----"
-              [ -f .dev.log ] && tail -n 200 .dev.log || true
-              # show netstat to help debug
-              ss -ltnp || true
-              exit 1
-            fi
-          done
+          echo "Waiting up to 180s for Next.js to be ready..."
+          if ! wait-on -t 180000 -v http://localhost:3000; then
+            echo "Timeout waiting for Next.js to start after 180s"
+            echo "---- .next.log output ----"
+            cat .next.log || true
+            echo "---- Process status ----"
+            ps aux | grep node || true
+            echo "---- Network status ----"
+            ss -ltnp || true
+            exit 1
+          fi
           echo "Next.js ready"
 
       - name: Run API integration tests
