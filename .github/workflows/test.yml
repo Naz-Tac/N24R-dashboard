@@ -43,18 +43,12 @@ jobs:
 
       - name: Wait for Next.js to be ready
         run: |
-          echo "Waiting up to 180s for Next.js to be ready..."
-          if ! wait-on -t 180000 -v http://localhost:3000; then
-            echo "Timeout waiting for Next.js to start after 180s"
-            echo "---- .next.log output ----"
-            cat .next.log || true
-            echo "---- Process status ----"
-            ps aux | grep node || true
-            echo "---- Network status ----"
-            ss -ltnp || true
+          echo "Waiting up to 240s for http://0.0.0.0:3000 ..."
+          npx wait-on http://0.0.0.0:3000 --timeout 240000 || (
+            echo "❌ Server did not respond within 240s. Printing .dev.log tail for debugging:"
+            tail -n 120 .dev.log || echo "No .dev.log found"
             exit 1
-          fi
-          echo "Next.js ready"
+          )
 
       - name: Run API integration tests
         run: |
