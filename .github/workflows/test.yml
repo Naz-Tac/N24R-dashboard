@@ -184,6 +184,26 @@ jobs:
           fi
           echo "✅ Assignments GET test passed"
 
+      - name: Test Dashboard endpoint
+        run: |
+          echo "📊 Testing GET /api/dashboard..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/dashboard)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response Body (truncated): $(echo "$BODY" | head -c 500)"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          # Verify response has expected structure (success and data fields)
+          if echo "$BODY" | grep -q '"success":true' && echo "$BODY" | grep -q '"data"'; then
+            echo "✅ Dashboard endpoint test passed with valid structure"
+          else
+            echo "❌ Response missing expected fields (success, data)"
+            exit 1
+          fi
+
       - name: Run API integration tests
         run: |
           echo "Running npm run test:api"
