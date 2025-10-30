@@ -46,7 +46,7 @@ export async function POST(request: Request) {
         }
       }, { status: 500 });
     }
-    const body = await request.json();
+  const body = await request.json();
 
     // Normalize time strings to HH:mm:ss (Postgres time type friendly)
     const normalizeTime = (t: unknown): string => {
@@ -67,12 +67,12 @@ export async function POST(request: Request) {
     };
 
     const record: Omit<AgentAvailability, 'id'> & { notes?: string | null } = {
-      agent_name: String(body.agent_name ?? ''),
-      availability_date: String(body.availability_date ?? ''),
-      start_time: normalizeTime(body.start_time),
-      end_time: normalizeTime(body.end_time),
-      // Pass through optional notes; many schemas allow nullable notes, and some require it to be explicit
-      notes: body.notes === undefined ? null : (body.notes === null ? null : String(body.notes))
+      agent_name: String(body.agent_name ?? '').trim(),
+      availability_date: String(body.availability_date ?? '').trim(),
+      start_time: normalizeTime(body.start_time).trim(),
+      end_time: normalizeTime(body.end_time).trim(),
+      // Ensure explicit null handling for notes
+      notes: body.notes === undefined ? null : (body.notes === null ? null : String(body.notes).trim())
     };
 
     console.log('🧾 Sanitized payload:', record);
@@ -83,11 +83,12 @@ export async function POST(request: Request) {
       .select();
 
     if (error) {
+      // Log both message and details explicitly for CI diagnostics
       console.error("❌ Insert error:", error);
       console.error("🔍 Error details:", {
         code: error.code,
         message: error.message,
-        details: error.details
+        details: error.details,
       });
       return NextResponse.json(
         {
@@ -100,7 +101,7 @@ export async function POST(request: Request) {
     }
 
     console.log('✅ Inserted availability:', data);
-    return NextResponse.json({ message: "Availability added", data }, { status: 201 });
+    return NextResponse.json({ success: true, data }, { status: 201 });
   } catch (err) {
     console.error("POST error:", err);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
