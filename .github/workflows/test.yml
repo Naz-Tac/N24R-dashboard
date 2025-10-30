@@ -146,6 +146,44 @@ jobs:
           fi
           echo "✅ Direct API test passed"
 
+      - name: Test Assignments POST endpoint
+        run: |
+          echo "🧪 Testing POST to /api/assignments with curl..."
+          # Generate random UUIDs for agent_id and shift_id
+          AGENT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          SHIFT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          STATUS="assigned"
+          NOTES="CI Test Assignment ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          PAYLOAD=$(printf '{"agent_id":"%s","shift_id":"%s","status":"%s","notes":"%s"}' "${AGENT_ID}" "${SHIFT_ID}" "${STATUS}" "${NOTES}")
+          echo "Using payload: $PAYLOAD"
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/assignments \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response Body: $BODY"
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "❌ Expected 201, got $HTTP_CODE"
+            echo "Response: $BODY"
+            exit 1
+          fi
+          echo "✅ Assignments POST test passed"
+
+      - name: Test Assignments GET endpoint
+        run: |
+          echo "🧪 Testing GET /api/assignments..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/assignments)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response Body (truncated): $(echo "$BODY" | head -c 500)"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          echo "✅ Assignments GET test passed"
+
       - name: Run API integration tests
         run: |
           echo "Running npm run test:api"
