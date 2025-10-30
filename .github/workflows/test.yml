@@ -93,9 +93,25 @@ jobs:
             -H "Accept: application/json" || echo "⚠️  Table check failed - table may not exist"
 
       - name: Run API integration tests
+        id: run_tests
+        continue-on-error: true
         run: |
           echo "Running npm run test:api"
-          npm run test:api
+          npm run test:api 2>&1 | tee test-output.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Show test output on failure
+        if: steps.run_tests.outcome == 'failure'
+        run: |
+          echo "=========================================="
+          echo "TEST FAILED - Full Output:"
+          echo "=========================================="
+          cat test-output.log || echo "No test output captured"
+          echo "=========================================="
+      
+      - name: Fail workflow if tests failed
+        if: steps.run_tests.outcome == 'failure'
+        run: exit 1
 
       - name: Show Next.js logs (if any)
         if: failure()
