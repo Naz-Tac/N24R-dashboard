@@ -65,7 +65,8 @@ async function fetcher(...args) {
     agent_name: 'Test Agent',
     availability_date: dateStr,
     start_time: '09:00',
-    end_time: '17:00'
+    end_time: '17:00',
+    notes: null  // explicitly include notes field (nullable in schema)
   };
 
   try {
@@ -96,8 +97,12 @@ async function fetcher(...args) {
     }
 
     if (postRes.status !== 201) {
-      console.error('Expected HTTP 201 from POST, got', postRes.status, postJson || 'no-json');
-      summary.warnings.push('POST did not return 201.');
+      console.error('Expected HTTP 201 from POST, got', postRes.status);
+      console.error('Response body:', JSON.stringify(postJson, null, 2));
+      if (postJson && postJson.error) {
+        console.error('⚠️  Supabase/API error:', postJson.error);
+      }
+      summary.warnings.push(`POST did not return 201. Got ${postRes.status}: ${postJson && postJson.error || 'unknown error'}`);
       // continue to try GET for diagnosis
     }
 
