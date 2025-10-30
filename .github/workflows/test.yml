@@ -87,9 +87,21 @@ jobs:
           # Add extra stability check before curl test
           sleep 3
           wait-on tcp:3000 --timeout 10000
+          # Build a unique, schema-valid payload to avoid collisions with any unique constraints
+          DATE=$(date -u +%F)
+          START_MIN=$(printf "%02d" $((RANDOM % 60)))
+          END_MIN=$(printf "%02d" $(((10 + RANDOM) % 60)))
+          START="10:${START_MIN}"
+          END="16:${END_MIN}"
+          NAME="CI Test ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          PAYLOAD=$(cat <<JSON
+          {"agent_name":"${NAME}","availability_date":"${DATE}","start_time":"${START}","end_time":"${END}","notes":null}
+JSON
+          )
+          echo "Using payload: $PAYLOAD"
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/availability \
             -H "Content-Type: application/json" \
-            -d '{"agent_name":"CI Test","availability_date":"2025-10-29","start_time":"10:00","end_time":"16:00","notes":null}')
+            -d "$PAYLOAD")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
           echo "HTTP Status: $HTTP_CODE"
