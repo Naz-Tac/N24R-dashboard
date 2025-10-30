@@ -92,6 +92,23 @@ jobs:
             -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
             -H "Accept: application/json" || echo "⚠️  Table check failed - table may not exist"
 
+      - name: Test API endpoint directly with curl
+        run: |
+          echo "🧪 Testing POST to /api/availability with curl..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/availability \
+            -H "Content-Type: application/json" \
+            -d '{"agent_name":"CI Test","availability_date":"2025-10-29","start_time":"10:00","end_time":"16:00","notes":null}')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response Body: $BODY"
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "❌ Expected 201, got $HTTP_CODE"
+            echo "Response: $BODY"
+            exit 1
+          fi
+          echo "✅ Direct API test passed"
+
       - name: Run API integration tests
         id: run_tests
         continue-on-error: true
