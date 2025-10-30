@@ -5,7 +5,7 @@ import { supabaseService } from '@/lib/supabaseClient';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
 
-export type Role = 'admin' | 'dispatcher' | 'agent' | null;
+export type Role = 'admin' | 'dispatcher' | 'agent' | 'manager' | null;
 
 export async function getUserFromRequest(req: NextRequest) {
   // Try Authorization: Bearer <access_token>
@@ -34,7 +34,7 @@ export async function getUserRole(userId: string): Promise<Role> {
       console.error('RBAC: error fetching role', error);
       return null;
     }
-    return (data?.role as Role) ?? null;
+  return (data?.role as Role) ?? null;
   } catch (e) {
     console.error('RBAC: fatal error fetching role', e);
     return null;

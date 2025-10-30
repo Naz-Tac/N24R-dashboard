@@ -141,7 +141,7 @@ jobs:
 
           echo "Creating admin user ${ADMIN_EMAIL}..."
           ADMIN_CREATE=$(create_user "$ADMIN_EMAIL" "$PASSWORD")
-          ADMIN_ID=$(echo "$ADMIN_CREATE" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+          ADMIN_ID=$(echo "$ADMIN_CREATE" | sed -n 's/.*"id":"\([^\"]*\)".*/\1/p')
           if [ -z "$ADMIN_ID" ]; then
             echo "❌ Could not parse admin user id"
             echo "$ADMIN_CREATE"
@@ -154,10 +154,11 @@ jobs:
             exit 1
           fi
           echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> $GITHUB_ENV
+          echo "ADMIN_ID=$ADMIN_ID" >> $GITHUB_ENV
 
           echo "Creating agent user ${AGENT_EMAIL}..."
           AGENT_CREATE=$(create_user "$AGENT_EMAIL" "$PASSWORD")
-          AGENT_ID=$(echo "$AGENT_CREATE" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+          AGENT_ID=$(echo "$AGENT_CREATE" | sed -n 's/.*"id":"\([^\"]*\)".*/\1/p')
           if [ -z "$AGENT_ID" ]; then
             echo "❌ Could not parse agent user id"
             echo "$AGENT_CREATE"
@@ -170,6 +171,7 @@ jobs:
             exit 1
           fi
           echo "AGENT_TOKEN=$AGENT_TOKEN" >> $GITHUB_ENV
+          echo "AGENT_ID=$AGENT_ID" >> $GITHUB_ENV
 
           echo "✅ Auth setup complete. Admin and Agent tokens exported."
 
@@ -681,6 +683,142 @@ jobs:
           if [ "${OK:-0}" != "1" ]; then echo "❌ Status not accepted in time"; echo "$OUT"; exit 1; fi
 
           echo "✅ Stage 14 messaging tests passed"
+
+      - name: Stage 15 – Multi-Org Tests
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "🏢 Stage 15: Multi-Org setup and validation"
+
+          # Create a manager user
+          MANAGER_EMAIL="manager-${{ github.run_id }}@ci.test"
+          PASSWORD="P@ss-${{ github.run_id }}"
+          M_CREATE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/auth/create-test-user \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"${MANAGER_EMAIL}\",\"password\":\"${PASSWORD}\"}")
+          M_CODE=$(echo "$M_CREATE" | tail -n1)
+          M_BODY=$(echo "$M_CREATE" | head -n-1)
+          if [ "$M_CODE" != "201" ]; then echo "❌ create manager failed"; echo "$M_BODY"; exit 1; fi
+          MANAGER_ID=$(echo "$M_BODY" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+          # Assign manager role
+          curl -s -X POST "${SUPABASE_URL}/rest/v1/user_roles?on_conflict=user_id" \
+            -H "apikey: ${SUPABASE_SERVICE}" -H "Authorization: Bearer ${SUPABASE_SERVICE}" \
+            -H "Content-Type: application/json" -H "Prefer: resolution=merge-duplicates,return=minimal" \
+            -d "[{\"user_id\":\"${MANAGER_ID}\",\"role\":\"manager\"}]" >/dev/null
+
+          # Get manager token
+          M_TOKEN=$(curl -s -X POST "${SUPABASE_URL}/auth/v1/token?grant_type=password" \
+            -H "apikey: ${SUPABASE_ANON}" -H "Content-Type: application/json" \
+            -d "{\"email\":\"${MANAGER_EMAIL}\",\"password\":\"${PASSWORD}\"}" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+          if [ -z "$M_TOKEN" ]; then echo "❌ manager token missing"; exit 1; fi
+          echo "M_TOKEN=$M_TOKEN" >> $GITHUB_ENV
+
+          echo "➕ Create organization (admin)"
+          ORG_CREATE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/organizations \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "{\"name\":\"Org ${{ github.run_id }}\",\"manager_user_id\":\"${MANAGER_ID}\"}")
+          O_CODE=$(echo "$ORG_CREATE" | tail -n1)
+          O_BODY=$(echo "$ORG_CREATE" | head -n-1)
+          if [ "$O_CODE" != "201" ]; then echo "❌ create org failed"; echo "$O_BODY"; exit 1; fi
+          ORG_ID=$(echo "$O_BODY" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+          echo "👤 Create org agent user"
+          ORG_AGENT_EMAIL="org-agent-${{ github.run_id }}@ci.test"
+          OA_CREATE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/auth/create-test-user \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"${ORG_AGENT_EMAIL}\",\"password\":\"${PASSWORD}\"}")
+          OA_CODE=$(echo "$OA_CREATE" | tail -n1)
+          OA_BODY=$(echo "$OA_CREATE" | head -n-1)
+          if [ "$OA_CODE" != "201" ]; then echo "❌ create org agent user failed"; echo "$OA_BODY"; exit 1; fi
+          ORG_AGENT_ID=$(echo "$OA_BODY" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+          echo "➕ Add manager and agent membership to org"
+          curl -s -X POST http://localhost:3000/api/organizations/members \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "{\"organization_id\":\"${ORG_ID}\",\"user_id\":\"${MANAGER_ID}\",\"role\":\"manager\"}" >/dev/null
+          curl -s -X POST http://localhost:3000/api/organizations/members \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "{\"organization_id\":\"${ORG_ID}\",\"user_id\":\"${ORG_AGENT_ID}\",\"role\":\"agent\"}" >/dev/null
+
+          echo "📊 Manager can access /org/dashboard"
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/org/dashboard \
+            -H "Cookie: sb-access-token=${M_TOKEN}")
+          if [ "$CODE" != "200" ]; then echo "❌ /org/dashboard expected 200, got $CODE"; exit 1; fi
+
+          echo "🗓️  Manager creates org shift"
+          S_CREATE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/org/shifts \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${M_TOKEN}" \
+            -d '{"date":"2025-12-01","start_time":"09:00","end_time":"17:00","location":"HQ"}')
+          S_CODE=$(echo "$S_CREATE" | tail -n1)
+          if [ "$S_CODE" != "201" ]; then echo "❌ org shift create failed"; echo "$S_CREATE"; exit 1; fi
+
+          echo "👥 Manager roster lists only org agents"
+          ROSTER=$(curl -s http://localhost:3000/api/org/roster -H "Authorization: Bearer ${M_TOKEN}")
+          echo "$ROSTER" | grep -q "$ORG_AGENT_ID" || (echo "❌ org roster missing org agent"; exit 1)
+
+          echo "🤝 Manager requests shared agent"
+          SHARED_AGENT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          REQ=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/org/request-shared \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${M_TOKEN}" \
+            -d "{\"shift_id\":\"dummy-shift\",\"agent_id\":\"${SHARED_AGENT_ID}\"}")
+          REQ_CODE=$(echo "$REQ" | tail -n1)
+          if [ "$REQ_CODE" != "201" ]; then echo "❌ request-shared failed"; echo "$REQ"; exit 1; fi
+
+          echo "🧭 Admin lists organizations"
+          ORGS=$(curl -s http://localhost:3000/api/organizations -H "Authorization: Bearer ${ADMIN_TOKEN}")
+          echo "$ORGS" | grep -q "$ORG_ID" || (echo "❌ admin did not see created org"; exit 1)
+
+          echo "✅ Stage 15 Multi-Org tests passed"
+
+      - name: Stage 16 – Analytics & Reporting Tests
+        env:
+          ANALYTICS_MOCK: '1'
+        run: |
+          echo "📊 Stage 16: Hitting analytics endpoints with mock data"
+          echo "→ GET /api/analytics/summary as ADMIN"
+          S1=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/analytics/summary \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
+          C1=$(echo "$S1" | tail -n1)
+          B1=$(echo "$S1" | head -n-1)
+          if [ "$C1" != "200" ]; then echo "❌ summary as admin failed ($C1)"; echo "$B1"; exit 1; fi
+          echo "$B1" | grep -q 'total_agents' || (echo "❌ missing total_agents"; exit 1)
+          echo "$B1" | grep -q 'accepted_vs_declined' || (echo "❌ missing accepted_vs_declined"; exit 1)
+
+          echo "→ GET /api/analytics/timeseries as ADMIN"
+          T1=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/analytics/timeseries \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
+          CT1=$(echo "$T1" | tail -n1)
+          BT1=$(echo "$T1" | head -n-1)
+          if [ "$CT1" != "200" ]; then echo "❌ timeseries as admin failed ($CT1)"; echo "$BT1"; exit 1; fi
+          echo "$BT1" | grep -q 'dates' || (echo "❌ missing dates"; exit 1)
+          echo "$BT1" | grep -q 'requests' || (echo "❌ missing requests"; exit 1)
+
+          echo "→ GET /api/analytics/summary as MANAGER"
+          S2=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/analytics/summary \
+            -H "Authorization: Bearer ${M_TOKEN}")
+          C2=$(echo "$S2" | tail -n1)
+          if [ "$C2" != "200" ]; then echo "❌ summary as manager failed ($C2)"; echo "$S2"; exit 1; fi
+
+          echo "→ GET /api/analytics/timeseries as MANAGER"
+          T2=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/analytics/timeseries \
+            -H "Authorization: Bearer ${M_TOKEN}")
+          CT2=$(echo "$T2" | tail -n1)
+          if [ "$CT2" != "200" ]; then echo "❌ timeseries as manager failed ($CT2)"; echo "$T2"; exit 1; fi
+
+          echo "→ Page render: /analytics as ADMIN"
+          PC=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/analytics \
+            -H "Cookie: sb-access-token=${ADMIN_TOKEN}")
+          if [ "$PC" != "200" ]; then echo "❌ /analytics expected 200, got $PC"; exit 1; fi
+
+          echo "✅ Stage 16 analytics tests passed"
 
       - name: Run API integration tests
         env:

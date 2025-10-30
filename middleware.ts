@@ -15,7 +15,7 @@ async function getUserRole(userId: string) {
       .eq('user_id', userId)
       .maybeSingle();
     if (error) return null;
-    return data?.role as 'admin' | 'dispatcher' | 'agent' | undefined;
+  return data?.role as 'admin' | 'dispatcher' | 'agent' | 'manager' | undefined;
   } catch {
     return undefined;
   }
@@ -48,14 +48,23 @@ function checkAccess(path: string, role: string | undefined) {
     path.startsWith('/agents') ||
     path.startsWith('/shifts') ||
     path.startsWith('/assignments') ||
-    path.startsWith('/settings')
+    path.startsWith('/settings') ||
+    path.startsWith('/analytics')
   ) {
+    // Analytics should be limited to admin and manager (not agents)
+    if (path.startsWith('/analytics')) {
+      return role === 'admin' || role === 'manager';
+    }
     return role === 'admin' || role === 'dispatcher';
   }
   // Agent group: require agent (allow admins/dispatchers too)
   if (path.startsWith('/availability') || path.startsWith('/agent')) {
     return role === 'agent' || role === 'admin' || role === 'dispatcher';
   }
+    // Org manager group
+    if (path.startsWith('/org')) {
+      return role === 'manager' || role === 'admin' || role === 'dispatcher';
+    }
   // API routes are handled primarily by route-level RBAC; allow here
   if (path.startsWith('/api/')) return true;
   // Default: allow
@@ -120,6 +129,8 @@ export const config = {
     '/settings/:path*',
     '/availability',
     '/agent/:path*',
+    '/analytics',
+     '/org/:path*',
     '/api/:path*',
   ],
 };
