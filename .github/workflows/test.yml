@@ -84,6 +84,14 @@ jobs:
           echo "NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:+[present]}"
           echo "SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:+[present]}"
 
+      - name: Verify agent_availability table exists
+        run: |
+          echo "🔍 Checking if agent_availability table exists in Supabase..."
+          curl -s -X GET "${NEXT_PUBLIC_SUPABASE_URL}/rest/v1/agent_availability?limit=1" \
+            -H "apikey: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Accept: application/json" || echo "⚠️  Table check failed - table may not exist"
+
       - name: Run API integration tests
         run: |
           echo "Running npm run test:api"
