@@ -24,15 +24,29 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install dependencies and wait-on
-        run: |
-          npm ci --include=dev
-          npm install -g wait-on
+      - name: Clear npm cache
+        run: npm cache clean --force
 
-      - name: Build (install dev deps if needed)
+      - name: Install dependencies
         run: |
-          # ensure TypeScript test can run
-          npm run build || true
+          npm ci --include=dev --no-optional --verbose > npm-install.log 2>&1 || (
+            echo "❌ npm install failed. Showing install log:"
+            cat npm-install.log
+            exit 1
+          )
+
+      - name: Install wait-on globally
+        run: npm install -g wait-on
+
+      - name: Build
+        env:
+          NODE_ENV: production
+        run: |
+          npm run build --verbose || (
+            echo "❌ Build failed. Showing npm install log for debugging:"
+            cat npm-install.log
+            exit 1
+          )
 
       - name: Start Next.js production server in background
         env:
