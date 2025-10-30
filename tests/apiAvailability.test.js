@@ -71,9 +71,11 @@ async function fetcher(...args) {
 
   try {
     // POST to local API
+    const postHeaders = { 'Content-Type': 'application/json' };
+    if (process.env.AUTH_TOKEN) postHeaders['Authorization'] = `Bearer ${process.env.AUTH_TOKEN}`;
     const postRes = await fetcher(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: postHeaders,
       body: JSON.stringify(payload),
       // small timeout not available on fetch consistently; rely on default
     }).catch((err) => ({ error: err }));
@@ -113,7 +115,9 @@ async function fetcher(...args) {
     }
 
     // GET local API
-    const getRes = await fetcher(API_URL, { method: 'GET' }).catch((err) => ({ error: err }));
+  const getHeaders = {};
+  if (process.env.AUTH_TOKEN) getHeaders['Authorization'] = `Bearer ${process.env.AUTH_TOKEN}`;
+  const getRes = await fetcher(API_URL, { method: 'GET', headers: getHeaders }).catch((err) => ({ error: err }));
     if (!getRes || getRes.error) {
       console.error('GET failed to connect to local server:', getRes && getRes.error ? getRes.error : getRes);
       summary.warnings.push('Failed to connect to local server on GET.');

@@ -1,11 +1,16 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseService } from "@/lib/supabaseClient";
 import type { Assignment } from "../../assignments/types";
+import { requireRole } from "@/lib/rbac";
 
 // Handle GET requests - fetch assignments with optional joins
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     console.log('📝 GET request to /api/assignments');
+    const auth = await requireRole(req, ['admin', 'dispatcher']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     
     // Fetch assignments ordered by assigned_at descending
     // In production, you might want to join with agents and shift_requests tables
@@ -31,9 +36,13 @@ export async function GET() {
 }
 
 // Handle POST requests - insert new assignment
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     console.log('📝 POST request to /api/assignments');
+    const auth = await requireRole(request, ['admin', 'dispatcher']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     
     // Runtime env validation
     const srkPresent = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -48,7 +57,7 @@ export async function POST(request: Request) {
       }, { status: 500 });
     }
 
-    const body = await request.json();
+  const body = await request.json();
 
     // Validate required fields
     if (!body.agent_id || !body.shift_id || !body.status) {

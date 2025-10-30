@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireRole } from '@/lib/rbac';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -29,8 +30,13 @@ function normalizeTime(time: string): string {
 }
 
 // GET - List all shifts
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    // Allow all authenticated roles to view shifts; enforce auth at least
+    const auth = await requireRole(req, ['admin', 'dispatcher', 'agent']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const { data, error } = await supabaseService
       .from('shifts')
       .select('*')
@@ -66,6 +72,10 @@ export async function GET() {
 // POST - Create new shift
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireRole(req, ['admin', 'dispatcher']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const body = await req.json();
     const { date, start_time, end_time, location, notes } = body;
 
@@ -157,6 +167,10 @@ export async function POST(req: NextRequest) {
 // PUT - Update shift
 export async function PUT(req: NextRequest) {
   try {
+    const auth = await requireRole(req, ['admin', 'dispatcher']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const body = await req.json();
     const { id, date, start_time, end_time, location, notes } = body;
 
@@ -282,6 +296,10 @@ export async function PUT(req: NextRequest) {
 // DELETE - Remove shift
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requireRole(req, ['admin', 'dispatcher']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
 

@@ -5,11 +5,51 @@ import Label from "@/components/form/Label";
 import Button from "@/components/ui/button/Button";
 import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "@/icons";
 import Link from "next/link";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function SignInForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [isChecked, setIsChecked] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+
+  useEffect(() => {
+    const { data: sub } = supabase?.auth?.onAuthStateChange((event, session) => {
+      if (session) {
+        router.push('/dashboard');
+      }
+    }) || { data: null } as any;
+    return () => {
+      sub?.subscription?.unsubscribe?.();
+    };
+  }, [router]);
+
+  const handleSubmit = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (error) throw error;
+      router.push('/dashboard');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to sign in');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithGoogle = async () => {
+    try {
+      await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/dashboard` : undefined } });
+    } catch (e) {
+      // ignore
+    }
+  };
   return (
     <div className="flex flex-col flex-1 lg:w-1/2 w-full">
       <div className="w-full max-w-md sm:pt-10 mx-auto mb-5">
@@ -33,7 +73,7 @@ export default function SignInForm() {
           </div>
           <div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5">
-              <button className="inline-flex items-center justify-center gap-3 py-3 text-sm font-normal text-gray-700 transition-colors bg-gray-100 rounded-lg px-7 hover:bg-gray-200 hover:text-gray-800 dark:bg-white/5 dark:text-white/90 dark:hover:bg-white/10">
+              <button onClick={signInWithGoogle} type="button" className="inline-flex items-center justify-center gap-3 py-3 text-sm font-normal text-gray-700 transition-colors bg-gray-100 rounded-lg px-7 hover:bg-gray-200 hover:text-gray-800 dark:bg-white/5 dark:text-white/90 dark:hover:bg-white/10">
                 <svg
                   width="20"
                   height="20"
@@ -90,7 +130,7 @@ export default function SignInForm() {
                   <Label>
                     Email <span className="text-error-500">*</span>{" "}
                   </Label>
-                  <Input placeholder="info@gmail.com" type="email" />
+                  <Input placeholder="info@gmail.com" type="email" defaultValue={email} onChange={(e) => setEmail(e.target.value)} />
                 </div>
                 <div>
                   <Label>
@@ -100,6 +140,8 @@ export default function SignInForm() {
                     <Input
                       type={showPassword ? "text" : "password"}
                       placeholder="Enter your password"
+                      defaultValue={password}
+                      onChange={(e) => setPassword(e.target.value)}
                     />
                     <span
                       onClick={() => setShowPassword(!showPassword)}
@@ -127,9 +169,12 @@ export default function SignInForm() {
                     Forgot password?
                   </Link>
                 </div>
+                {error && (
+                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</div>
+                )}
                 <div>
-                  <Button className="w-full" size="sm">
-                    Sign in
+                  <Button className="w-full" size="sm" disabled={loading} onClick={handleSubmit}>
+                    {loading ? 'Signing in...' : 'Sign in'}
                   </Button>
                 </div>
               </div>

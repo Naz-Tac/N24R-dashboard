@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireRole } from '@/lib/rbac';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -11,8 +12,12 @@ if (!supabaseUrl || !supabaseServiceKey) {
 const supabaseService = createClient(supabaseUrl, supabaseServiceKey);
 
 // GET - List all agents
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const auth = await requireRole(req, ['admin']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const { data, error } = await supabaseService
       .from('agents')
       .select('*')
@@ -47,6 +52,10 @@ export async function GET() {
 // POST - Create new agent
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireRole(req, ['admin']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const body = await req.json();
     const { name, email, role, status } = body;
 
@@ -161,6 +170,10 @@ export async function POST(req: NextRequest) {
 // PUT - Update agent
 export async function PUT(req: NextRequest) {
   try {
+    const auth = await requireRole(req, ['admin']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const body = await req.json();
     const { id, name, email, role, status } = body;
 
@@ -303,6 +316,10 @@ export async function PUT(req: NextRequest) {
 // DELETE - Remove agent
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requireRole(req, ['admin']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
 

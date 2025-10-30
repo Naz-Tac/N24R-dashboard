@@ -75,9 +75,11 @@ interface TestSummary {
 
   try {
     // POST to local API
+    const postHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (process.env.AUTH_TOKEN) postHeaders['Authorization'] = `Bearer ${process.env.AUTH_TOKEN}`;
     const postRes = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: postHeaders,
       body: JSON.stringify(payload),
     }).catch((err: Error) => ({ error: err }));
 
@@ -112,7 +114,9 @@ interface TestSummary {
     }
 
     // GET local API
-    const getRes = await fetch(API_URL, { method: 'GET' }).catch((err: Error) => ({ error: err }));
+  const getHeaders: Record<string, string> = {};
+  if (process.env.AUTH_TOKEN) getHeaders['Authorization'] = `Bearer ${process.env.AUTH_TOKEN}`;
+  const getRes = await fetch(API_URL, { method: 'GET', headers: getHeaders }).catch((err: Error) => ({ error: err }));
     if ('error' in getRes) {
       console.error('GET failed to connect to local server:', getRes.error);
       summary.warnings.push('Failed to connect to local server on GET.');

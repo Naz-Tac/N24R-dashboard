@@ -39,3 +39,4 @@
 ]
  POST /api/availability 201 in 659ms
  GET /api/availability 200 in 209ms
+[?25h

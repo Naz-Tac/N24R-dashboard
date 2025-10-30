@@ -81,6 +81,98 @@ jobs:
             exit 1
           )
 
+      - name: Setup Auth & RBAC test users (admin, agent)
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "👥 Creating admin and agent test users and obtaining tokens..."
+
+          RUN_ID=${{ github.run_id }}
+          ATTEMPT=${{ github.run_attempt }}
+          ADMIN_EMAIL="admin-${RUN_ID}-${ATTEMPT}@ci.test"
+          AGENT_EMAIL="agent-${RUN_ID}-${ATTEMPT}@ci.test"
+          PASSWORD="P@ss-${RUN_ID}-${ATTEMPT}"
+
+          create_user() {
+            local EMAIL="$1"
+            local PASSWORD="$2"
+            RESP=$(curl -s -w "\n%{http_code}" -X POST "http://localhost:3000/api/auth/create-test-user" \
+              -H "Content-Type: application/json" \
+              -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")
+            CODE=$(echo "$RESP" | tail -n1)
+            BODY=$(echo "$RESP" | head -n-1)
+            if [ "$CODE" != "201" ]; then
+              echo "❌ Failed to create user ${EMAIL}, HTTP $CODE"
+              echo "Response: $BODY"
+              exit 1
+            fi
+            echo "$BODY"
+          }
+
+          get_token() {
+            local EMAIL="$1"
+            local PASSWORD="$2"
+            TOKEN_RESP=$(curl -s -X POST "${SUPABASE_URL}/auth/v1/token?grant_type=password" \
+              -H "apikey: ${SUPABASE_ANON}" \
+              -H "Content-Type: application/json" \
+              -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")
+            # Extract access_token with sed to avoid jq dependency
+            echo "$TOKEN_RESP" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p'
+          }
+
+          set_role() {
+            local USER_ID="$1"
+            local ROLE="$2"
+            ROLE_RESP=$(curl -s -w "\n%{http_code}" -X POST "${SUPABASE_URL}/rest/v1/user_roles?on_conflict=user_id" \
+              -H "apikey: ${SUPABASE_SERVICE}" \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE}" \
+              -H "Content-Type: application/json" \
+              -H "Prefer: resolution=merge-duplicates,return=minimal" \
+              -d "[{\"user_id\":\"${USER_ID}\",\"role\":\"${ROLE}\"}]")
+            RC=$(echo "$ROLE_RESP" | tail -n1)
+            if [ "$RC" != "201" ] && [ "$RC" != "204" ]; then
+              echo "❌ Failed to set role ${ROLE} for user ${USER_ID}, HTTP $RC"
+              echo "Response: $(echo "$ROLE_RESP" | head -n-1)"
+              exit 1
+            fi
+          }
+
+          echo "Creating admin user ${ADMIN_EMAIL}..."
+          ADMIN_CREATE=$(create_user "$ADMIN_EMAIL" "$PASSWORD")
+          ADMIN_ID=$(echo "$ADMIN_CREATE" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+          if [ -z "$ADMIN_ID" ]; then
+            echo "❌ Could not parse admin user id"
+            echo "$ADMIN_CREATE"
+            exit 1
+          fi
+          set_role "$ADMIN_ID" "admin"
+          ADMIN_TOKEN=$(get_token "$ADMIN_EMAIL" "$PASSWORD")
+          if [ -z "$ADMIN_TOKEN" ]; then
+            echo "❌ Failed to obtain admin access token"
+            exit 1
+          fi
+          echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> $GITHUB_ENV
+
+          echo "Creating agent user ${AGENT_EMAIL}..."
+          AGENT_CREATE=$(create_user "$AGENT_EMAIL" "$PASSWORD")
+          AGENT_ID=$(echo "$AGENT_CREATE" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+          if [ -z "$AGENT_ID" ]; then
+            echo "❌ Could not parse agent user id"
+            echo "$AGENT_CREATE"
+            exit 1
+          fi
+          set_role "$AGENT_ID" "agent"
+          AGENT_TOKEN=$(get_token "$AGENT_EMAIL" "$PASSWORD")
+          if [ -z "$AGENT_TOKEN" ]; then
+            echo "❌ Failed to obtain agent access token"
+            exit 1
+          fi
+          echo "AGENT_TOKEN=$AGENT_TOKEN" >> $GITHUB_ENV
+
+          echo "✅ Auth setup complete. Admin and Agent tokens exported."
+
       - name: Test health endpoint
         run: |
           echo "🏥 Testing /api/availability/health endpoint..."
@@ -132,6 +224,7 @@ jobs:
           echo "Using payload: $PAYLOAD"
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/availability \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${AGENT_TOKEN}" \
             -d "$PAYLOAD")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
@@ -158,6 +251,7 @@ jobs:
           echo "Using payload: $PAYLOAD"
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/assignments \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
             -d "$PAYLOAD")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
@@ -173,7 +267,8 @@ jobs:
       - name: Test Assignments GET endpoint
         run: |
           echo "🧪 Testing GET /api/assignments..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/assignments)
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/assignments \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
           echo "HTTP Status: $HTTP_CODE"
@@ -204,7 +299,7 @@ jobs:
             exit 1
           fi
 
-      - name: Dashboard Charts Render Test
+      - name: Dashboard Charts Render Test (allow redirect if protected)
         run: |
           echo "📈 Testing Dashboard page with charts..."
           # Test that the dashboard page loads successfully
@@ -212,10 +307,13 @@ jobs:
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
           echo "HTTP Status: $HTTP_CODE"
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "❌ Dashboard page failed to load, got HTTP $HTTP_CODE"
-            exit 1
-          fi
+          # Accept 200 (rendered) or 30x (redirect to signin) depending on middleware state
+          case "$HTTP_CODE" in
+            200|301|302|307|308)
+              echo "✅ Dashboard page reachable (HTTP $HTTP_CODE)" ;;
+            *)
+              echo "❌ Dashboard page unexpected status $HTTP_CODE" ; exit 1 ;;
+          esac
           # Verify the page contains dashboard elements (basic HTML structure check)
           if echo "$BODY" | grep -qi "dashboard" || echo "$BODY" | grep -qi "availability"; then
             echo "✅ Dashboard page rendered successfully"
@@ -240,6 +338,7 @@ jobs:
           )
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/agents \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
             -d "$AGENT_PAYLOAD")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
@@ -253,7 +352,8 @@ jobs:
           
           # GET - List agents (expect 200)
           echo "Testing GET /api/agents..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/agents)
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/agents \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ GET failed, expected 200, got $HTTP_CODE"
@@ -271,6 +371,7 @@ jobs:
           )
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT http://localhost:3000/api/agents \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
             -d "$UPDATE_PAYLOAD")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
@@ -282,7 +383,8 @@ jobs:
           
           # DELETE - Remove agent (expect 204)
           echo "Testing DELETE /api/agents..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "http://localhost:3000/api/agents?id=$AGENT_ID")
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "http://localhost:3000/api/agents?id=$AGENT_ID" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
           if [ "$HTTP_CODE" != "204" ]; then
             echo "❌ DELETE failed, expected 204, got $HTTP_CODE"
             exit 1
@@ -308,6 +410,7 @@ jobs:
           )
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/shifts \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
             -d "$SHIFT_PAYLOAD")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
@@ -321,7 +424,8 @@ jobs:
           
           # GET - List shifts (expect 200)
           echo "Testing GET /api/shifts..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/shifts)
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/shifts \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ GET failed, expected 200, got $HTTP_CODE"
@@ -339,6 +443,7 @@ jobs:
           )
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT http://localhost:3000/api/shifts \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
             -d "$UPDATE_PAYLOAD")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
@@ -350,7 +455,8 @@ jobs:
           
           # DELETE - Remove shift (expect 204)
           echo "Testing DELETE /api/shifts..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "http://localhost:3000/api/shifts?id=$SHIFT_ID")
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "http://localhost:3000/api/shifts?id=$SHIFT_ID" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
           if [ "$HTTP_CODE" != "204" ]; then
             echo "❌ DELETE failed, expected 204, got $HTTP_CODE"
             exit 1
@@ -358,56 +464,126 @@ jobs:
           
           echo "✅ Shifts API CRUD tests passed"
 
-        - name: Realtime Connectivity Test
-          run: |
-            echo "📡 Testing Supabase Realtime connectivity..."
+      - name: Realtime Connectivity Test
+        run: |
+          echo "📡 Testing Supabase Realtime connectivity..."
           
-            # Insert a test record into agent_availability to trigger realtime event
-            echo "Inserting test availability record to trigger realtime event..."
-            REALTIME_PAYLOAD=$(cat <<EOF
-            {
-              "agent_name": "Realtime Test Agent ${{ github.run_id }}",
-              "availability_date": "2025-11-20",
-              "start_time": "10:00",
-              "end_time": "18:00",
-              "notes": "Realtime connectivity test"
-            }
-            EOF
-            )
-            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/availability \
-              -H "Content-Type: application/json" \
-              -d "$REALTIME_PAYLOAD")
-            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-            BODY=$(echo "$RESPONSE" | head -n-1)
+          # Insert a test record into agent_availability to trigger realtime event
+          echo "Inserting test availability record to trigger realtime event..."
+          REALTIME_PAYLOAD=$(cat <<EOF
+          {
+            "agent_name": "Realtime Test Agent ${{ github.run_id }}",
+            "availability_date": "2025-11-20",
+            "start_time": "10:00",
+            "end_time": "18:00",
+            "notes": "Realtime connectivity test"
+          }
+          EOF
+          )
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/availability \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "$REALTIME_PAYLOAD")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
           
-            if [ "$HTTP_CODE" != "201" ]; then
-              echo "❌ Failed to insert realtime test record, got HTTP $HTTP_CODE"
-              echo "Response: $BODY"
-              exit 1
-            fi
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "❌ Failed to insert realtime test record, got HTTP $HTTP_CODE"
+            echo "Response: $BODY"
+            exit 1
+          fi
           
-            echo "✅ Realtime test record inserted successfully"
-            echo "📡 Realtime event should be logged in browser console when dashboard is open"
-            echo "Note: CI validates realtime channel setup via successful insert"
+          echo "✅ Realtime test record inserted successfully"
+          echo "📡 Realtime event should be logged in browser console when dashboard is open"
+          echo "Note: CI validates realtime channel setup via successful insert"
           
-            # Verify the record was created via GET
-            echo "Verifying record via GET /api/availability..."
-            RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/availability)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-            BODY=$(echo "$RESPONSE" | head -n-1)
+          # Verify the record was created via GET
+          echo "Verifying record via GET /api/availability..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/availability \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
           
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "❌ GET verification failed, got HTTP $HTTP_CODE"
-              exit 1
-            fi
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ GET verification failed, got HTTP $HTTP_CODE"
+            exit 1
+          fi
           
-            if echo "$BODY" | grep -q "Realtime Test Agent"; then
-              echo "✅ Realtime Connectivity Test passed - record verified"
-            else
-              echo "⚠️  Record inserted but not found in GET response (may be timing issue)"
-            fi
+          if echo "$BODY" | grep -q "Realtime Test Agent"; then
+            echo "✅ Realtime Connectivity Test passed - record verified"
+          else
+            echo "⚠️  Record inserted but not found in GET response (may be timing issue)"
+          fi
+
+      - name: Stage 12 – Auth & RBAC Tests
+        run: |
+          echo "🔐 Stage 12: Auth & RBAC behavioral checks..."
+          echo "0) Unauthenticated GET /dashboard should redirect to /signin"
+          UNAUTH_HEADERS=$(curl -s -D - -o /dev/null http://localhost:3000/dashboard)
+          echo "$UNAUTH_HEADERS" | grep -qi "^location: .*signin" || (echo "❌ Expected redirect to /signin for unauthenticated" && exit 1)
+
+          echo "1) Admin can GET /api/agents (expect 200)"
+          ADMIN_GET=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/agents \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
+          ADMIN_CODE=$(echo "$ADMIN_GET" | tail -n1)
+          if [ "$ADMIN_CODE" != "200" ]; then
+            echo "❌ Admin GET /api/agents expected 200, got $ADMIN_CODE"; exit 1; fi
+
+          echo "2) Agent forbidden on GET /api/agents (expect 403)"
+          AGENT_GET=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/agents \
+            -H "Authorization: Bearer ${AGENT_TOKEN}")
+          AGENT_CODE=$(echo "$AGENT_GET" | tail -n1)
+          if [ "$AGENT_CODE" != "403" ]; then
+            echo "❌ Agent GET /api/agents expected 403, got $AGENT_CODE"; exit 1; fi
+
+          echo "3) Agent can POST /api/availability (expect 201)"
+          NOWDATE=$(date -u +%F)
+          AV_PAYLOAD=$(printf '{"agent_name":"RBAC Agent","availability_date":"%s","start_time":"08:00","end_time":"12:00"}' "$NOWDATE")
+          AV_POST=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/availability \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${AGENT_TOKEN}" \
+            -d "$AV_PAYLOAD")
+          AV_CODE=$(echo "$AV_POST" | tail -n1)
+          if [ "$AV_CODE" != "201" ]; then
+            echo "❌ Agent POST /api/availability expected 201, got $AV_CODE"; exit 1; fi
+
+          echo "4) Unauthenticated POST /api/assignments blocked (expect 401/403)"
+          ASG_PAYLOAD='{"agent_id":"00000000-0000-0000-0000-000000000000","shift_id":"00000000-0000-0000-0000-000000000000","status":"assigned"}'
+          UNAUTH=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/api/assignments \
+            -H "Content-Type: application/json" \
+            -d "$ASG_PAYLOAD")
+          case "$UNAUTH" in
+            401|403) echo "✅ Unauthenticated request correctly blocked (HTTP $UNAUTH)" ;;
+            *) echo "❌ Expected 401/403 for unauthenticated, got $UNAUTH"; exit 1 ;;
+          esac
+
+          echo "5) Agent page access: /availability allowed, /dashboard denied"
+          # Provide session to middleware via sb-access-token cookie
+          AV_PAGE_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/availability \
+            -H "Cookie: sb-access-token=${AGENT_TOKEN}")
+          if [ "$AV_PAGE_CODE" != "200" ]; then
+            echo "❌ Agent should access /availability page, got $AV_PAGE_CODE"; exit 1; fi
+          DASH_HEADERS=$(curl -s -D - -o /dev/null http://localhost:3000/dashboard \
+            -H "Cookie: sb-access-token=${AGENT_TOKEN}")
+          echo "$DASH_HEADERS" | grep -qi "^location: .*signin" || (echo "❌ Agent should be redirected away from /dashboard" && exit 1)
+
+          echo "6) Admin can access protected pages"
+          for PATH in \
+            "/dashboard" \
+            "/agents" \
+            "/shifts" \
+            "/settings/users"; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000${PATH}" \
+              -H "Cookie: sb-access-token=${ADMIN_TOKEN}")
+            if [ "$CODE" != "200" ]; then
+              echo "❌ Admin GET ${PATH} expected 200, got $CODE"; exit 1; fi
+          done
+
+          echo "✅ Stage 12 Auth & RBAC tests passed"
 
       - name: Run API integration tests
+        env:
+          AUTH_TOKEN: ${{ env.AGENT_TOKEN }}
         run: |
           echo "Running npm run test:api"
           # Small buffer to ensure server is fully warm after curl test

@@ -1,10 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase, supabaseService } from "@/lib/supabaseClient";
 import type { AgentAvailability, AvailabilityResponse } from "../../../app/availability/types";
+import { requireRole } from "@/lib/rbac";
 
 // Handle GET requests
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const auth = await requireRole(req, ['admin', 'agent']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     const { data, error } = await supabaseService
       .from("agent_availability")
       .select("*")
@@ -23,8 +28,12 @@ export async function GET() {
 }
 
 // Handle POST requests
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const auth = await requireRole(request, ['admin', 'agent']);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
     console.log('📝 POST request to /api/availability');
     // Runtime env validation to avoid silent failures in CI
     const srkPresent = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
