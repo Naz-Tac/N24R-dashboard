@@ -47,7 +47,14 @@ export async function POST(request: Request) {
         message: error.message,
         details: error.details
       });
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json(
+        {
+          error: error.message || error.details || "Unknown error",
+          code: error.code,
+          details: error.details,
+        },
+        { status: 400 }
+      );
     }
 
     console.log('✅ Inserted availability:', data);

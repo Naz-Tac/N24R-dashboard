@@ -106,6 +106,8 @@ jobs:
           if [ "$HTTP_CODE" != "201" ]; then
             echo "❌ Expected 201, got $HTTP_CODE"
             echo "Response: $BODY"
+            echo "---- .next.log (tail) ----"
+            [ -f .next.log ] && tail -n 200 .next.log || echo "No .next.log found"
             exit 1
           fi
           echo "✅ Direct API test passed"
@@ -115,7 +117,7 @@ jobs:
           echo "Running npm run test:api"
           # Small buffer to ensure server is fully warm after curl test
           sleep 2
-          npm run test:api
+          PORT=3000 npm run test:api
 
       - name: Show Next.js logs (if any)
         if: failure()
