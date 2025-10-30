@@ -26,6 +26,26 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     console.log('📝 POST request to /api/availability');
+    // Runtime env validation to avoid silent failures in CI
+    const srkPresent = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+    const urlPresent = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL);
+    const clientUsable = typeof (supabaseService as any)?.from === 'function';
+    console.log('🔧 Supabase runtime check:', {
+      srkPresent,
+      urlPresent,
+      clientUsable,
+    });
+    if (!srkPresent || !urlPresent || !clientUsable) {
+      console.error('❌ Supabase client not properly configured at runtime');
+      return NextResponse.json({
+        error: 'Supabase not configured at runtime',
+        details: {
+          srkPresent,
+          urlPresent,
+          clientUsable,
+        }
+      }, { status: 500 });
+    }
     const body = await request.json();
     
     const record: Omit<AgentAvailability, 'id'> = {
