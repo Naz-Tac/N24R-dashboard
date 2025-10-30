@@ -52,8 +52,8 @@ function checkAccess(path: string, role: string | undefined) {
   ) {
     return role === 'admin' || role === 'dispatcher';
   }
-  // Agent group: require agent (allow admins too for flexibility)
-  if (path.startsWith('/availability')) {
+  // Agent group: require agent (allow admins/dispatchers too)
+  if (path.startsWith('/availability') || path.startsWith('/agent')) {
     return role === 'agent' || role === 'admin' || role === 'dispatcher';
   }
   // API routes are handled primarily by route-level RBAC; allow here
@@ -119,6 +119,7 @@ export const config = {
     '/assignments',
     '/settings/:path*',
     '/availability',
+    '/agent/:path*',
     '/api/:path*',
   ],
 };

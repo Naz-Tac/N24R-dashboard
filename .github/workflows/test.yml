@@ -581,6 +581,57 @@ jobs:
 
           echo "✅ Stage 12 Auth & RBAC tests passed"
 
+      - name: Stage 13 – Agent Portal & Respond Flow
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "👤 Stage 13: Verify /agent/dashboard access with agent cookie"
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/agent/dashboard \
+            -H "Cookie: sb-access-token=${AGENT_TOKEN}")
+          if [ "$CODE" != "200" ]; then
+            echo "❌ /agent/dashboard expected 200, got $CODE"; exit 1; fi
+
+          echo "📌 Create an assignment for the agent (admin)"
+          SHIFT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          ASSIGN_PAYLOAD=$(printf '{"agent_id":"%s","shift_id":"%s","status":"assigned"}' "${AGENT_ID}" "${SHIFT_ID}")
+          CREATE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/assignments \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "$ASSIGN_PAYLOAD")
+          C_CODE=$(echo "$CREATE" | tail -n1)
+          C_BODY=$(echo "$CREATE" | head -n-1)
+          if [ "$C_CODE" != "201" ]; then
+            echo "❌ Failed to create assignment, HTTP $C_CODE"; echo "$C_BODY"; exit 1; fi
+          ASSIGNMENT_ID=$(echo "$C_BODY" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+          if [ -z "$ASSIGNMENT_ID" ]; then echo "❌ Could not parse assignment id"; echo "$C_BODY"; exit 1; fi
+
+          echo "✅ Assignment created: $ASSIGNMENT_ID"
+          echo "🟢 Agent responds ACCEPT to assignment"
+          RESPOND=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/assignments/respond \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${AGENT_TOKEN}" \
+            -d "{\"assignment_id\":\"${ASSIGNMENT_ID}\",\"action\":\"accept\"}")
+          R_CODE=$(echo "$RESPOND" | tail -n1)
+          R_BODY=$(echo "$RESPOND" | head -n-1)
+          if [ "$R_CODE" != "200" ]; then
+            echo "❌ Agent respond expected 200, got $R_CODE"; echo "$R_BODY"; exit 1; fi
+
+          echo "⏱️  Verifying status via Supabase REST (wait up to 2s)"
+          TARGET_URL="${SUPABASE_URL}/rest/v1/assignments?id=eq.${ASSIGNMENT_ID}&select=id,status"
+          for i in 1 2 3 4; do
+            S=$(curl -s "$TARGET_URL" -H "apikey: ${SUPABASE_ANON}" -H "Authorization: Bearer ${SUPABASE_SERVICE}")
+            STATUS=$(echo "$S" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
+            if [ "$STATUS" = "accepted" ]; then
+              echo "✅ Assignment status updated to 'accepted'"; FOUND=1; break; fi
+            sleep 0.5
+          done
+          if [ "${FOUND:-0}" != "1" ]; then
+            echo "❌ Assignment status did not update to 'accepted' in time"; echo "$S"; exit 1; fi
+
+          echo "✅ Stage 13 Agent Portal tests passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}
