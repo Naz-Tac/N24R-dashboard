@@ -113,6 +113,8 @@ jobs:
       - name: Run API integration tests
         run: |
           echo "Running npm run test:api"
+          # Small buffer to ensure server is fully warm after curl test
+          sleep 2
           npm run test:api
 
       - name: Show Next.js logs (if any)
