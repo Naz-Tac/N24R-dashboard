@@ -29,7 +29,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm ci --include=dev --no-optional --verbose > npm-install.log 2>&1 || (
+          # Install with verbose logging; include optional deps so Next SWC binaries are available
+          npm ci --include=dev --verbose > npm-install.log 2>&1 || (
             echo "❌ npm install failed. Showing install log:"
             cat npm-install.log
             exit 1
