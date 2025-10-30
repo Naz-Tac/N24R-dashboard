@@ -81,6 +81,40 @@ jobs:
             exit 1
           )
 
+      - name: Test health endpoint
+        run: |
+          echo "🏥 Testing /api/availability/health endpoint..."
+          HEALTH_RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/availability/health)
+          HEALTH_CODE=$(echo "$HEALTH_RESPONSE" | tail -n1)
+          HEALTH_BODY=$(echo "$HEALTH_RESPONSE" | head -n-1)
+          echo "Health Status: $HEALTH_CODE"
+          echo "Health Body: $HEALTH_BODY"
+          if [ "$HEALTH_CODE" != "200" ]; then
+            echo "❌ Health check failed with status $HEALTH_CODE"
+            exit 1
+          fi
+          echo "✅ Health check passed"
+
+      - name: Test Supabase connectivity
+        run: |
+          echo "🔗 Testing Supabase connection..."
+          # Use PostgREST to execute a lightweight query (SELECT NOW())
+          SUPABASE_URL="${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}"
+          SUPABASE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+          # Query a simple RPC or use PostgREST to verify connection
+          # For simplicity, we'll query the agent_availability table with a limit 0 (no data returned, just tests connection)
+          CONN_RESPONSE=$(curl -s -w "\n%{http_code}" "${SUPABASE_URL}/rest/v1/agent_availability?limit=0" \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}")
+          CONN_CODE=$(echo "$CONN_RESPONSE" | tail -n1)
+          echo "Supabase connectivity status: $CONN_CODE"
+          if [ "$CONN_CODE" != "200" ]; then
+            echo "❌ Supabase connectivity check failed with status $CONN_CODE"
+            echo "Response: $(echo "$CONN_RESPONSE" | head -n-1)"
+            exit 1
+          fi
+          echo "✅ Supabase connection verified"
+
       - name: Test API endpoint directly with curl
         run: |
           echo "🧪 Testing POST to /api/availability with curl..."
