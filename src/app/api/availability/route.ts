@@ -66,11 +66,13 @@ export async function POST(request: Request) {
       return '';
     };
 
-    const record: Omit<AgentAvailability, 'id'> = {
+    const record: Omit<AgentAvailability, 'id'> & { notes?: string | null } = {
       agent_name: String(body.agent_name ?? ''),
       availability_date: String(body.availability_date ?? ''),
       start_time: normalizeTime(body.start_time),
-      end_time: normalizeTime(body.end_time)
+      end_time: normalizeTime(body.end_time),
+      // Pass through optional notes; many schemas allow nullable notes, and some require it to be explicit
+      notes: body.notes === undefined ? null : (body.notes === null ? null : String(body.notes))
     };
 
     console.log('🧾 Sanitized payload:', record);

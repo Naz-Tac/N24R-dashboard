@@ -3,8 +3,9 @@ export interface AgentAvailability {
   id?: string | number;  // Optional as it's assigned by Supabase
   agent_name: string;
   availability_date: string;  // ISO date string
-  start_time: string;    // HH:mm format
-  end_time: string;      // HH:mm format
+  start_time: string;    // HH:mm:ss format
+  end_time: string;      // HH:mm:ss format
+  notes?: string | null; // Optional free-form note; nullable in DB
 }
 
 export interface ApiResponse<T = any> {
