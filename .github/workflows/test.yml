@@ -632,6 +632,56 @@ jobs:
 
           echo "✅ Stage 13 Agent Portal tests passed"
 
+      - name: Stage 14 – Messaging Automation Tests
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NOTIFICATIONS_MOCK: '1'
+          WEBHOOK_SECRET: 'ci-secret'
+        run: |
+          echo "📣 Stage 14: Messaging send and webhook response"
+          # Create assignment for agent
+          SHIFT2_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          MAKE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/assignments \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "{\"agent_id\":\"${AGENT_ID}\",\"shift_id\":\"${SHIFT2_ID}\",\"status\":\"assigned\"}")
+          M_CODE=$(echo "$MAKE" | tail -n1)
+          M_BODY=$(echo "$MAKE" | head -n-1)
+          if [ "$M_CODE" != "201" ]; then echo "❌ Create assignment failed"; echo "$M_BODY"; exit 1; fi
+          AID=$(echo "$M_BODY" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+          echo "Assignment: $AID"
+
+          echo "➡️  Send notification (mock providers)"
+          SEND=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/notifications/send \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "{\"agent_id\":\"${AGENT_ID}\",\"shift_id\":\"${SHIFT2_ID}\",\"channel\":\"sms\",\"message\":\"New shift assigned\"}")
+          S_CODE=$(echo "$SEND" | tail -n1)
+          S_BODY=$(echo "$SEND" | head -n-1)
+          echo "Send code: $S_CODE Body: $S_BODY"
+          if [ "$S_CODE" != "200" ]; then echo "❌ Notification send failed"; exit 1; fi
+
+          echo "📥 Simulate webhook response: YES -> accept"
+          RESP=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/assignments/respond \
+            -H "Content-Type: application/json" \
+            -d "{\"webhook_secret\":\"${WEBHOOK_SECRET}\",\"assignment_id\":\"${AID}\",\"body\":\"YES\"}")
+          R_CODE=$(echo "$RESP" | tail -n1)
+          if [ "$R_CODE" != "200" ]; then echo "❌ Webhook respond failed ($R_CODE)"; echo "$RESP"; exit 1; fi
+
+          echo "🔎 Verify status becomes accepted within 3s"
+          TARGET="${SUPABASE_URL}/rest/v1/assignments?id=eq.${AID}&select=id,status"
+          for i in 1 2 3 4 5 6; do
+            OUT=$(curl -s "$TARGET" -H "apikey: ${SUPABASE_ANON}" -H "Authorization: Bearer ${SUPABASE_SERVICE}")
+            STATUS=$(echo "$OUT" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
+            if [ "$STATUS" = "accepted" ]; then echo "✅ Accepted confirmed"; OK=1; break; fi
+            sleep 0.5
+          done
+          if [ "${OK:-0}" != "1" ]; then echo "❌ Status not accepted in time"; echo "$OUT"; exit 1; fi
+
+          echo "✅ Stage 14 messaging tests passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}

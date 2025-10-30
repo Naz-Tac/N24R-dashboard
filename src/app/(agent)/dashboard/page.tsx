@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { showNotification } from '@/components/Notifications';
 import { supabase as realtimeClient, useRealtimeUpdates } from '@/lib/useRealtimeUpdates';
 import { createClient } from '@supabase/supabase-js';
 
@@ -122,8 +123,10 @@ export default function AgentDashboardPage() {
       setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, status: action === 'accept' ? 'accepted' : 'declined' } : a)));
     } catch (e) {
       console.error('respond error', e);
-      alert('Failed to update assignment status');
+      showNotification('Failed to update assignment status', 'delete');
+      return;
     }
+    showNotification(`Shift ${action === 'accept' ? 'accepted' : 'declined'}`, 'success');
   };
 
   const assigned = useMemo(() => assignments, [assignments]);

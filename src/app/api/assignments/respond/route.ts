@@ -4,16 +4,35 @@ import { requireRole, getUserFromRequest } from '@/lib/rbac';
 
 export async function POST(req: NextRequest) {
   try {
-    // Allow agents to respond; admins/dispatchers may also simulate
-    const auth = await requireRole(req, ['agent', 'admin', 'dispatcher']);
-    if (!auth.ok) {
-      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    const body = await req.json().catch(() => ({} as any));
+    const webhookSecret = process.env.WEBHOOK_SECRET;
+    const providedSecret = String(body.webhook_secret || '').trim();
+
+    // Determine mode: webhook (no auth) vs. authenticated agent/admin
+    let mode: 'webhook' | 'auth' = 'auth';
+    if (providedSecret && webhookSecret && providedSecret === webhookSecret) {
+      mode = 'webhook';
     }
 
-  const user = await getUserFromRequest(req);
-    const body = await req.json();
+    let userId: string | null = null;
+    let role: 'agent' | 'admin' | 'dispatcher' | null = null;
+    if (mode === 'auth') {
+      const auth = await requireRole(req, ['agent', 'admin', 'dispatcher']);
+      if (!auth.ok) {
+        return NextResponse.json({ error: auth.message }, { status: auth.status });
+      }
+  userId = auth.userId ?? null;
+      role = auth.role as any;
+    }
+
     const assignment_id = String(body.assignment_id || '').trim();
-    const action = String(body.action || '').trim().toLowerCase();
+    // Action mapping: if webhook, map from body/body_text; else use explicit action
+    let action = String(body.action || '').trim().toLowerCase();
+    if (!action && mode === 'webhook') {
+      const text = String(body.body || body.message || '').trim().toLowerCase();
+      if (['yes', 'y', 'confirm', 'accepted', 'accept'].includes(text)) action = 'accept';
+      if (['no', 'n', 'decline', 'declined', 'reject'].includes(text)) action = 'decline';
+    }
 
     if (!assignment_id || !['accept', 'decline'].includes(action)) {
       return NextResponse.json({
@@ -37,8 +56,8 @@ export async function POST(req: NextRequest) {
     }
 
     // If the requester is an agent, ensure they own the assignment
-    if (auth.role === 'agent') {
-      if (!user || existing.agent_id !== user.id) {
+    if (mode === 'auth' && role === 'agent') {
+      if (!userId || existing.agent_id !== userId) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
     }
