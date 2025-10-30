@@ -223,6 +223,141 @@ jobs:
             echo "⚠️  Dashboard page loaded but content validation inconclusive"
           fi
 
+      - name: Agents API CRUD Tests
+        run: |
+          echo "👤 Testing Agents API CRUD operations..."
+          
+          # POST - Create agent (expect 201)
+          echo "Testing POST /api/agents..."
+          AGENT_PAYLOAD=$(cat <<EOF
+          {
+            "name": "Test Agent ${{ github.run_id }}",
+            "email": "agent-${{ github.run_id }}@test.com",
+            "role": "Support Agent",
+            "status": "active"
+          }
+          EOF
+          )
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/agents \
+            -H "Content-Type: application/json" \
+            -d "$AGENT_PAYLOAD")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "POST Response: $BODY"
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "❌ POST failed, expected 201, got $HTTP_CODE"
+            exit 1
+          fi
+          AGENT_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | head -n1 | cut -d'"' -f4)
+          echo "Created agent with ID: $AGENT_ID"
+          
+          # GET - List agents (expect 200)
+          echo "Testing GET /api/agents..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/agents)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ GET failed, expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          # PUT - Update agent (expect 200)
+          echo "Testing PUT /api/agents..."
+          UPDATE_PAYLOAD=$(cat <<EOF
+          {
+            "id": "$AGENT_ID",
+            "status": "inactive"
+          }
+          EOF
+          )
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT http://localhost:3000/api/agents \
+            -H "Content-Type: application/json" \
+            -d "$UPDATE_PAYLOAD")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "PUT Response: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ PUT failed, expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          # DELETE - Remove agent (expect 204)
+          echo "Testing DELETE /api/agents..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "http://localhost:3000/api/agents?id=$AGENT_ID")
+          if [ "$HTTP_CODE" != "204" ]; then
+            echo "❌ DELETE failed, expected 204, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          echo "✅ Agents API CRUD tests passed"
+
+      - name: Shifts API CRUD Tests
+        run: |
+          echo "📅 Testing Shifts API CRUD operations..."
+          
+          # POST - Create shift (expect 201)
+          echo "Testing POST /api/shifts..."
+          SHIFT_PAYLOAD=$(cat <<EOF
+          {
+            "date": "2025-11-15",
+            "start_time": "09:00",
+            "end_time": "17:00",
+            "location": "Office Building A",
+            "notes": "CI Test Shift ${{ github.run_id }}"
+          }
+          EOF
+          )
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/shifts \
+            -H "Content-Type: application/json" \
+            -d "$SHIFT_PAYLOAD")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "POST Response: $BODY"
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "❌ POST failed, expected 201, got $HTTP_CODE"
+            exit 1
+          fi
+          SHIFT_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | head -n1 | cut -d'"' -f4)
+          echo "Created shift with ID: $SHIFT_ID"
+          
+          # GET - List shifts (expect 200)
+          echo "Testing GET /api/shifts..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/shifts)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ GET failed, expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          # PUT - Update shift (expect 200)
+          echo "Testing PUT /api/shifts..."
+          UPDATE_PAYLOAD=$(cat <<EOF
+          {
+            "id": "$SHIFT_ID",
+            "location": "Office Building B"
+          }
+          EOF
+          )
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT http://localhost:3000/api/shifts \
+            -H "Content-Type: application/json" \
+            -d "$UPDATE_PAYLOAD")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "PUT Response: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ PUT failed, expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          # DELETE - Remove shift (expect 204)
+          echo "Testing DELETE /api/shifts..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "http://localhost:3000/api/shifts?id=$SHIFT_ID")
+          if [ "$HTTP_CODE" != "204" ]; then
+            echo "❌ DELETE failed, expected 204, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          echo "✅ Shifts API CRUD tests passed"
+
       - name: Run API integration tests
         run: |
           echo "Running npm run test:api"
