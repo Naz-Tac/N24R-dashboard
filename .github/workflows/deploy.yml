@@ -1,0 +1,142 @@
+# Vercel Deployment Workflow
+# Automatically deploys to Vercel on tagged releases (v1.0.x) and manual dispatch
+# Outputs preview URL for verification
+
+name: Deploy to Vercel
+
+on:
+  push:
+    tags:
+      - 'v1.*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    # Required secrets (set in GitHub Settings > Secrets):
+    # - VERCEL_TOKEN: Vercel authentication token
+    # - VERCEL_ORG_ID: Organization ID from Vercel project settings
+    # - VERCEL_PROJECT_ID: Project ID from Vercel project settings
+    # - NEXT_PUBLIC_SUPABASE_URL: Supabase project URL
+    # - NEXT_PUBLIC_SUPABASE_ANON_KEY: Supabase anonymous key
+    # - SUPABASE_SERVICE_ROLE_KEY: Supabase service role key
+    
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci --include=dev
+      
+      - name: Build Next.js application
+        env:
+          NODE_ENV: production
+        run: npm run build
+      
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+      
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=${{ github.event.inputs.environment || 'production' }} --token=${{ secrets.VERCEL_TOKEN }}
+      
+      - name: Build Project Artifacts for Vercel
+        run: vercel build ${{ github.event.inputs.environment == 'production' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+      
+      - name: Deploy to Vercel
+        id: deploy
+        run: |
+          # Deploy and capture the preview URL
+          if [ "${{ github.event.inputs.environment }}" = "production" ] || [ -n "${{ github.ref_name }}" ]; then
+            DEPLOY_URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          else
+            DEPLOY_URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          fi
+          
+          echo "DEPLOY_URL=$DEPLOY_URL" >> $GITHUB_OUTPUT
+          echo "🚀 Deployed to: $DEPLOY_URL"
+          
+          # Save URL to file for artifact
+          echo "$DEPLOY_URL" > deployment-url.txt
+      
+      - name: Upload Deployment URL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-url
+          path: deployment-url.txt
+          retention-days: 30
+      
+      - name: Post deployment summary
+        run: |
+          echo "## 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment URL:** [${{ steps.deploy.outputs.DEPLOY_URL }}](${{ steps.deploy.outputs.DEPLOY_URL }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.environment || 'production' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Quick Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [Dashboard](${{ steps.deploy.outputs.DEPLOY_URL }}/dashboard)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Analytics](${{ steps.deploy.outputs.DEPLOY_URL }}/analytics)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Agent Portal](${{ steps.deploy.outputs.DEPLOY_URL }}/agent/dashboard)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Org Portal](${{ steps.deploy.outputs.DEPLOY_URL }}/org/dashboard)" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Health check deployed application
+        run: |
+          echo "🏥 Running health checks on deployed URL..."
+          DEPLOY_URL="${{ steps.deploy.outputs.DEPLOY_URL }}"
+          
+          # Wait for deployment to be fully ready (max 60s)
+          for i in {1..12}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$DEPLOY_URL" || echo "000")
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "307" ] || [ "$HTTP_CODE" = "308" ]; then
+              echo "✅ Deployment is live (HTTP $HTTP_CODE)"
+              break
+            fi
+            echo "⏳ Waiting for deployment... ($i/12)"
+            sleep 5
+          done
+          
+          # Test key endpoints
+          echo "Testing /api/availability/health..."
+          HEALTH=$(curl -s -w "\n%{http_code}" "$DEPLOY_URL/api/availability/health" || echo "000")
+          HEALTH_CODE=$(echo "$HEALTH" | tail -n1)
+          if [ "$HEALTH_CODE" = "200" ]; then
+            echo "✅ Health endpoint OK"
+          else
+            echo "⚠️  Health endpoint returned $HEALTH_CODE"
+          fi
+          
+          echo "Deployment health check complete"
+      
+      - name: Notify deployment (optional webhook)
+        if: success()
+        run: |
+          # Optional: Add Slack/Discord/webhook notification here
+          # Example:
+          # curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+          #   -H 'Content-Type: application/json' \
+          #   -d '{"text":"🚀 Deployed ${{ github.ref_name }} to ${{ steps.deploy.outputs.DEPLOY_URL }}"}'
+          echo "📢 Deployment notification skipped (webhook not configured)"

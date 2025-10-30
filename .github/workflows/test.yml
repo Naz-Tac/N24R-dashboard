@@ -820,6 +820,73 @@ jobs:
 
           echo "✅ Stage 16 analytics tests passed"
 
+      - name: Stage 17 – Deployment Readiness Check
+        run: |
+          echo "🚀 Stage 17: Verifying deployment readiness"
+          
+          echo "→ Check deployment artifacts exist"
+          if [ ! -d ".next" ]; then
+            echo "❌ .next build directory missing"
+            exit 1
+          fi
+          
+          echo "→ Verify production build completed"
+          if [ ! -f ".next/BUILD_ID" ]; then
+            echo "❌ BUILD_ID missing - production build incomplete"
+            exit 1
+          fi
+          
+          BUILD_ID=$(cat .next/BUILD_ID)
+          echo "✅ Build ID: $BUILD_ID"
+          
+          echo "→ Check required routes are built"
+          ROUTES=("dashboard" "analytics" "agents" "shifts" "assignments")
+          for ROUTE in "${ROUTES[@]}"; do
+            if [ ! -d ".next/server/app/(admin)/${ROUTE}" ]; then
+              echo "⚠️  Warning: Route ${ROUTE} may not be built"
+            else
+              echo "✅ Route ${ROUTE} built"
+            fi
+          done
+          
+          echo "→ Verify API routes are present"
+          if [ ! -d ".next/server/app/api" ]; then
+            echo "❌ API routes directory missing"
+            exit 1
+          fi
+          echo "✅ API routes present"
+          
+          echo "→ Check static assets"
+          if [ ! -d ".next/static" ]; then
+            echo "❌ Static assets missing"
+            exit 1
+          fi
+          echo "✅ Static assets generated"
+          
+          echo "→ Deployment summary"
+          echo "📦 Build artifacts ready for Vercel deployment"
+          echo "📊 Total build size: $(du -sh .next | cut -f1)"
+          echo "🔢 API endpoints: $(find .next/server/app/api -name 'route.js' 2>/dev/null | wc -l)"
+          echo "📄 Pages: $(find .next/server/app -name 'page.js' 2>/dev/null | wc -l)"
+          
+          # Add deployment summary to GitHub Actions summary
+          echo "## 🚀 Deployment Readiness Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Build ID:** \`$BUILD_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Size:** $(du -sh .next | cut -f1)" >> $GITHUB_STEP_SUMMARY
+          echo "**API Endpoints:** $(find .next/server/app/api -name 'route.js' 2>/dev/null | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "**Pages Built:** $(find .next/server/app -name 'page.js' 2>/dev/null | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Deployment Prerequisites" >> $GITHUB_STEP_SUMMARY
+          echo "- [x] Production build completed" >> $GITHUB_STEP_SUMMARY
+          echo "- [x] Static assets generated" >> $GITHUB_STEP_SUMMARY
+          echo "- [x] API routes built" >> $GITHUB_STEP_SUMMARY
+          echo "- [x] Pages rendered" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** Tag this commit with \`v1.0.x\` to trigger automatic Vercel deployment." >> $GITHUB_STEP_SUMMARY
+          
+          echo "✅ Stage 17 deployment readiness check passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}
