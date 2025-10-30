@@ -1,3 +1,6 @@
+# API Integration Tests
+# Builds Next.js in production mode, waits for readiness, tests Supabase API endpoints.
+
 name: API Integration Tests
 
 on:
@@ -78,23 +81,12 @@ jobs:
             exit 1
           )
 
-      - name: Confirm Supabase envs loaded
-        run: |
-          echo "NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-not set}"
-          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:+[present]}"
-          echo "SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:+[present]}"
-
-      - name: Verify agent_availability table exists
-        run: |
-          echo "🔍 Checking if agent_availability table exists in Supabase..."
-          curl -s -X GET "${NEXT_PUBLIC_SUPABASE_URL}/rest/v1/agent_availability?limit=1" \
-            -H "apikey: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
-            -H "Accept: application/json" || echo "⚠️  Table check failed - table may not exist"
-
       - name: Test API endpoint directly with curl
         run: |
           echo "🧪 Testing POST to /api/availability with curl..."
+          # Add extra stability check before curl test
+          sleep 3
+          wait-on tcp:3000 --timeout 10000
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/availability \
             -H "Content-Type: application/json" \
             -d '{"agent_name":"CI Test","availability_date":"2025-10-29","start_time":"10:00","end_time":"16:00","notes":null}')
@@ -110,28 +102,12 @@ jobs:
           echo "✅ Direct API test passed"
 
       - name: Run API integration tests
-        id: run_tests
-        continue-on-error: true
         run: |
           echo "Running npm run test:api"
-          npm run test:api 2>&1 | tee test-output.log
-          exit ${PIPESTATUS[0]}
-
-      - name: Show test output on failure
-        if: steps.run_tests.outcome == 'failure'
-        run: |
-          echo "=========================================="
-          echo "TEST FAILED - Full Output:"
-          echo "=========================================="
-          cat test-output.log || echo "No test output captured"
-          echo "=========================================="
-      
-      - name: Fail workflow if tests failed
-        if: steps.run_tests.outcome == 'failure'
-        run: exit 1
+          npm run test:api
 
       - name: Show Next.js logs (if any)
         if: failure()
         run: |
-          echo "---- .dev.log (tail) ----"
-          [ -f .dev.log ] && tail -n 200 .dev.log || true
+          echo "---- .next.log (tail) ----"
+          [ -f .next.log ] && tail -n 200 .next.log || echo "No .next.log found"
