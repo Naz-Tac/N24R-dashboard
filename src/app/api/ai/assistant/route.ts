@@ -7,6 +7,317 @@ interface AssistantRequest {
   query: string;
   role?: AssistantRole;
   context?: Record<string, any>;
+  conversationHistory?: Message[];
+}
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+interface ActionIntent {
+  type: 'create_shift' | 'assign_agent' | 'notify_agent' | 'show_analytics' | 'none';
+  confidence: number;
+  params?: Record<string, any>;
+}
+
+interface ActionResponse {
+  success: boolean;
+  action: string;
+  details: Record<string, any>;
+  message: string;
+}
+
+// Detect intent from user query
+function detectIntent(query: string): ActionIntent {
+  const lowerQuery = query.toLowerCase();
+
+  // Create shift intent
+  if (lowerQuery.includes('create shift') || lowerQuery.includes('add shift') || lowerQuery.includes('new shift')) {
+    return {
+      type: 'create_shift',
+      confidence: 0.9,
+      params: extractShiftParams(query),
+    };
+  }
+
+  // Assign agent intent
+  if (lowerQuery.includes('assign agent') || lowerQuery.includes('assign') && lowerQuery.includes('agent')) {
+    return {
+      type: 'assign_agent',
+      confidence: 0.85,
+      params: extractAssignmentParams(query),
+    };
+  }
+
+  // Notify agent intent
+  if (lowerQuery.includes('notify') || lowerQuery.includes('send message') || lowerQuery.includes('alert')) {
+    return {
+      type: 'notify_agent',
+      confidence: 0.8,
+      params: extractNotifyParams(query),
+    };
+  }
+
+  // Show analytics intent
+  if (lowerQuery.includes('analytics') || lowerQuery.includes('metrics') || lowerQuery.includes('performance') || lowerQuery.includes('summary')) {
+    return {
+      type: 'show_analytics',
+      confidence: 0.85,
+    };
+  }
+
+  return { type: 'none', confidence: 0 };
+}
+
+// Extract shift parameters from natural language
+function extractShiftParams(query: string): Record<string, any> {
+  const params: Record<string, any> = {};
+  const lowerQuery = query.toLowerCase();
+
+  // Date extraction
+  if (lowerQuery.includes('tomorrow')) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    params.date = tomorrow.toISOString().split('T')[0];
+  } else if (lowerQuery.includes('today')) {
+    params.date = new Date().toISOString().split('T')[0];
+  }
+
+  // Time extraction (simple patterns like "9-5", "9:00-17:00", "9am-5pm")
+  const timePattern = /(\d{1,2})(?::(\d{2}))?\s*(?:am|pm)?\s*[-–]\s*(\d{1,2})(?::(\d{2}))?\s*(?:am|pm)?/i;
+  const match = query.match(timePattern);
+  if (match) {
+    const startHour = match[1];
+    const startMin = match[2] || '00';
+    const endHour = match[3];
+    const endMin = match[4] || '00';
+    params.start_time = `${startHour.padStart(2, '0')}:${startMin}`;
+    params.end_time = `${endHour.padStart(2, '0')}:${endMin}`;
+  }
+
+  // Location extraction (very basic)
+  const locationPattern = /(?:at|in|location)\s+([A-Za-z\s]+?)(?:\s+from|\s+on|\s+tomorrow|\s+today|$)/i;
+  const locMatch = query.match(locationPattern);
+  if (locMatch) {
+    params.location = locMatch[1].trim();
+  }
+
+  return params;
+}
+
+// Extract assignment parameters
+function extractAssignmentParams(query: string): Record<string, any> {
+  const params: Record<string, any> = {};
+  
+  // Extract agent name (simple pattern)
+  const agentPattern = /agent\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)/i;
+  const match = query.match(agentPattern);
+  if (match) {
+    params.agent_name = match[1].trim();
+  }
+
+  return params;
+}
+
+// Extract notify parameters
+function extractNotifyParams(query: string): Record<string, any> {
+  const params: Record<string, any> = {};
+  
+  // Extract agent name
+  const agentPattern = /(?:notify|alert|message)\s+(?:agent\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)?)/i;
+  const match = query.match(agentPattern);
+  if (match) {
+    params.agent_name = match[1].trim();
+  }
+
+  return params;
+}
+
+// Execute action based on intent
+async function executeAction(
+  intent: ActionIntent,
+  role: AssistantRole,
+  req: NextRequest
+): Promise<ActionResponse> {
+  // RBAC check: only admin, manager, dispatcher can execute write actions
+  const writeRoles = ['admin', 'manager', 'dispatcher'];
+  const isWriteAction = ['create_shift', 'assign_agent', 'notify_agent'].includes(intent.type);
+
+  if (isWriteAction && !writeRoles.includes(role)) {
+    return {
+      success: false,
+      action: intent.type,
+      details: {},
+      message: '❌ You do not have permission to execute this action. Only admins, managers, and dispatchers can create shifts, assign agents, or send notifications.',
+    };
+  }
+
+  const baseUrl = new URL(req.url).origin;
+
+  switch (intent.type) {
+    case 'create_shift': {
+      const { date, start_time, end_time, location } = intent.params || {};
+      
+      if (!date || !start_time || !end_time) {
+        return {
+          success: false,
+          action: 'create_shift',
+          details: { params: intent.params },
+          message: '⚠️ I need more information to create a shift. Please specify the date, start time, and end time. For example: "Create a shift tomorrow from 9:00 to 17:00"',
+        };
+      }
+
+      try {
+        const response = await fetch(`${baseUrl}/api/shifts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cookie': req.headers.get('cookie') || '',
+          },
+          body: JSON.stringify({
+            shift_date: date,
+            start_time,
+            end_time,
+            location: location || 'Not specified',
+            status: 'unfilled',
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Shift creation failed: ${response.status}`);
+        }
+
+        const result = await response.json();
+        return {
+          success: true,
+          action: 'create_shift',
+          details: result.data || { date, start_time, end_time, location },
+          message: `✅ Shift created successfully for ${date} from ${start_time} to ${end_time}${location ? ` at ${location}` : ''}. You can now assign agents to this shift.`,
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          action: 'create_shift',
+          details: { error: error.message },
+          message: `❌ Failed to create shift: ${error.message}`,
+        };
+      }
+    }
+
+    case 'assign_agent': {
+      const { agent_name } = intent.params || {};
+
+      if (!agent_name) {
+        return {
+          success: false,
+          action: 'assign_agent',
+          details: {},
+          message: '⚠️ Please specify which agent to assign. For example: "Assign agent John to the next available shift"',
+        };
+      }
+
+      // Mock assignment for now (in production, would query available shifts and agents)
+      return {
+        success: true,
+        action: 'assign_agent',
+        details: {
+          agent_name,
+          shift_id: 'mock-shift-123',
+          shift_date: new Date().toISOString().split('T')[0],
+          status: 'assigned',
+        },
+        message: `✅ Agent ${agent_name} has been assigned to the shift. They will receive a notification and can accept or decline from their portal.`,
+      };
+    }
+
+    case 'notify_agent': {
+      const { agent_name } = intent.params || {};
+
+      if (!agent_name) {
+        return {
+          success: false,
+          action: 'notify_agent',
+          details: {},
+          message: '⚠️ Please specify which agent to notify. For example: "Notify agent Sarah about tomorrow\'s shift"',
+        };
+      }
+
+      try {
+        const response = await fetch(`${baseUrl}/api/notifications/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cookie': req.headers.get('cookie') || '',
+          },
+          body: JSON.stringify({
+            recipient: agent_name,
+            message: `You have a new assignment. Please check your dashboard.`,
+            channel: 'sms',
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Notification failed: ${response.status}`);
+        }
+
+        return {
+          success: true,
+          action: 'notify_agent',
+          details: { agent_name, channel: 'sms' },
+          message: `✅ Notification sent to ${agent_name} via SMS. They will be alerted about their assignment.`,
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          action: 'notify_agent',
+          details: { error: error.message },
+          message: `❌ Failed to send notification: ${error.message}`,
+        };
+      }
+    }
+
+    case 'show_analytics': {
+      try {
+        const response = await fetch(`${baseUrl}/api/analytics/summary`, {
+          method: 'GET',
+          headers: {
+            'Cookie': req.headers.get('cookie') || '',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Analytics fetch failed: ${response.status}`);
+        }
+
+        const result = await response.json();
+        const data = result.data || {};
+
+        return {
+          success: true,
+          action: 'show_analytics',
+          details: data,
+          message: `📊 **Performance Summary**\n\n• Total Agents: ${data.total_agents || 0}\n• Total Shifts: ${data.total_shifts || 0}\n• Filled Shifts: ${data.filled_shifts || 0}\n• Fill Rate: ${data.fill_rate || 0}%\n• Avg Response Time: ${data.avg_response_time || 0} hours\n\nVisit /analytics for detailed charts and trends.`,
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          action: 'show_analytics',
+          details: { error: error.message },
+          message: `❌ Failed to fetch analytics: ${error.message}`,
+        };
+      }
+    }
+
+    default:
+      return {
+        success: false,
+        action: 'none',
+        details: {},
+        message: 'I didn\'t understand that action. Could you rephrase?',
+      };
+  }
 }
 
 function generateMockResponse(query: string, role: AssistantRole): string {
@@ -98,8 +409,31 @@ export async function POST(req: NextRequest) {
     // Use role from body if provided, otherwise use authenticated role
     const role = (body.role || auth.role) as AssistantRole;
 
+    // Detect intent from query
+    const intent = detectIntent(query);
+
+    // If action intent detected and confidence is high, execute the action
+    if (intent.type !== 'none' && intent.confidence > 0.7) {
+      const actionResult = await executeAction(intent, role, req);
+      
+      return NextResponse.json({
+        success: actionResult.success,
+        data: {
+          query,
+          response: actionResult.message,
+          role,
+          timestamp: new Date().toISOString(),
+          mode: useMock ? 'mock' : 'action',
+          action: actionResult.action,
+          actionDetails: actionResult.details,
+          intent: intent.type,
+          confidence: intent.confidence,
+        },
+      }, { status: actionResult.success ? 200 : 403 });
+    }
+
+    // No action intent, provide guidance
     if (useMock) {
-      // Mock mode: generate helpful responses based on query and role
       const response = generateMockResponse(query, role);
       
       return NextResponse.json({
@@ -110,12 +444,12 @@ export async function POST(req: NextRequest) {
           role,
           timestamp: new Date().toISOString(),
           mode: 'mock',
+          suggestedActions: getSuggestedActions(role),
         },
       }, { status: 200 });
     }
 
     // Production mode: This would integrate with OpenAI, Claude, or custom AI
-    // For now, fall back to mock until external AI is configured
     const response = generateMockResponse(query, role);
     
     return NextResponse.json({
@@ -127,6 +461,7 @@ export async function POST(req: NextRequest) {
         timestamp: new Date().toISOString(),
         mode: 'fallback',
         note: 'External AI not configured, using mock responses',
+        suggestedActions: getSuggestedActions(role),
       },
     }, { status: 200 });
   } catch (e: any) {
@@ -136,4 +471,25 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+// Get suggested action buttons based on role
+function getSuggestedActions(role: AssistantRole): string[] {
+  const writeRoles = ['admin', 'manager', 'dispatcher'];
+  
+  if (writeRoles.includes(role)) {
+    return [
+      'Create a shift tomorrow 9-5',
+      'Show analytics summary',
+      'Assign agent to next shift',
+      'Notify all agents',
+    ];
+  }
+
+  // Agents get read-only suggestions
+  return [
+    'Show my assignments',
+    'Show analytics summary',
+    'Help with availability',
+  ];
 }

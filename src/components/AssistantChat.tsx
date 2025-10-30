@@ -1,12 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { usePathname } from 'next/navigation';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  action?: string;
+  actionDetails?: Record<string, any>;
 }
 
 interface AssistantChatProps {
@@ -16,6 +19,8 @@ interface AssistantChatProps {
 }
 
 export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: AssistantChatProps) {
+  const pathname = usePathname();
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -26,6 +31,31 @@ export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: A
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [suggestedActions, setSuggestedActions] = useState<string[]>([]);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Set suggested actions based on role
+  useEffect(() => {
+    const writeRoles = ['admin', 'manager', 'dispatcher'];
+    if (writeRoles.includes(userRole)) {
+      setSuggestedActions([
+        'Create a shift tomorrow 9-5',
+        'Show analytics summary',
+        'Assign agent to next shift',
+        'Notify all agents',
+      ]);
+    } else {
+      setSuggestedActions([
+        'Show my assignments',
+        'Show analytics summary',
+        'Help with availability',
+      ]);
+    }
+  }, [userRole]);
 
   function getWelcomeMessage(role: string): string {
     switch (role) {
@@ -57,13 +87,32 @@ export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: A
     setLoading(true);
 
     try {
+      // Build conversation history (last 5 turns for context)
+      const recentMessages = messages.slice(-10); // Last 5 pairs of user/assistant
+      const conversationHistory = recentMessages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp.toISOString(),
+      }));
+
       const response = await fetch('/api/ai/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: userMessage.content, role: userRole }),
+        body: JSON.stringify({
+          query: userMessage.content,
+          role: userRole,
+          context: {
+            pathname,
+            timestamp: new Date().toISOString(),
+          },
+          conversationHistory,
+        }),
       });
 
       if (!response.ok) {
+        if (response.status === 403) {
+          throw new Error('You do not have permission to perform this action.');
+        }
         throw new Error(`HTTP ${response.status}`);
       }
 
@@ -73,21 +122,32 @@ export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: A
         role: 'assistant',
         content: result.data?.response || 'Sorry, I encountered an error.',
         timestamp: new Date(),
+        action: result.data?.action,
+        actionDetails: result.data?.actionDetails,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error) {
+
+      // Update suggested actions if provided
+      if (result.data?.suggestedActions) {
+        setSuggestedActions(result.data.suggestedActions);
+      }
+    } catch (error: any) {
       console.error('Assistant error:', error);
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: '❌ Sorry, I encountered an error. Please try again.',
+        content: `❌ ${error.message || 'Sorry, I encountered an error. Please try again.'}`,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleActionClick(action: string) {
+    setInput(action);
   }
 
   if (!isOpen) return null;
@@ -136,6 +196,11 @@ export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: A
                   }`}
                 >
                   <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+                  {msg.action && msg.actionDetails && (
+                    <div className="mt-2 border-t border-white/20 pt-2 text-xs opacity-80">
+                      Action: {msg.action}
+                    </div>
+                  )}
                   <p className="mt-1 text-xs opacity-70">
                     {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </p>
@@ -153,7 +218,26 @@ export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: A
                 </div>
               </div>
             )}
+            <div ref={messagesEndRef} />
           </div>
+
+          {/* Suggested Actions */}
+          {suggestedActions.length > 0 && !loading && (
+            <div className="border-t border-stroke px-4 py-3 dark:border-strokedark">
+              <p className="mb-2 text-xs font-medium text-slate-600 dark:text-slate-400">Quick Actions:</p>
+              <div className="flex flex-wrap gap-2">
+                {suggestedActions.map((action, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleActionClick(action)}
+                    className="rounded-md bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 transition-all hover:bg-slate-200 hover:scale-105 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                  >
+                    {action}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Input */}
           <div className="border-t border-stroke p-4 dark:border-strokedark">

@@ -945,6 +945,98 @@ jobs:
           
           echo "✅ Stage 18 AI Assistant tests passed"
 
+      - name: Stage 19 – AI Action Automation Test
+        env:
+          AI_ASSISTANT_MOCK: '1'
+        run: |
+          echo "⚡ Stage 19: AI action automation and intelligent routing tests"
+          
+          echo "→ POST /api/ai/assistant with 'create shift' intent (admin)"
+          CS1=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"query":"Create a shift tomorrow 9-5","role":"admin"}')
+          CS1_CODE=$(echo "$CS1" | tail -n1)
+          CS1_BODY=$(echo "$CS1" | head -n-1)
+          if [ "$CS1_CODE" != "200" ]; then echo "❌ Create shift intent failed ($CS1_CODE)"; echo "$CS1_BODY"; exit 1; fi
+          echo "$CS1_BODY" | grep -q '"action"' || (echo "❌ missing action field"; exit 1)
+          echo "$CS1_BODY" | grep -q 'create_shift' || (echo "❌ action should be create_shift"; exit 1)
+          echo "$CS1_BODY" | grep -qi 'shift created\|created successfully' || (echo "❌ response missing success confirmation"; exit 1)
+          echo "✅ Create shift action executed successfully"
+          
+          echo "→ POST /api/ai/assistant with 'assign agent' intent (manager)"
+          AA1=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${M_TOKEN}" \
+            -d '{"query":"Assign agent John to the next shift","role":"manager"}')
+          AA1_CODE=$(echo "$AA1" | tail -n1)
+          AA1_BODY=$(echo "$AA1" | head -n-1)
+          if [ "$AA1_CODE" != "200" ]; then echo "❌ Assign agent intent failed ($AA1_CODE)"; echo "$AA1_BODY"; exit 1; fi
+          echo "$AA1_BODY" | grep -q '"action"' || (echo "❌ missing action field"; exit 1)
+          echo "$AA1_BODY" | grep -q 'assign_agent' || (echo "❌ action should be assign_agent"; exit 1)
+          echo "$AA1_BODY" | grep -qi 'assigned\|assignment' || (echo "❌ response missing assignment confirmation"; exit 1)
+          echo "✅ Assign agent action executed successfully"
+          
+          echo "→ POST /api/ai/assistant with 'show analytics' intent (admin)"
+          SA1=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"query":"Show analytics summary","role":"admin"}')
+          SA1_CODE=$(echo "$SA1" | tail -n1)
+          SA1_BODY=$(echo "$SA1" | head -n-1)
+          if [ "$SA1_CODE" != "200" ]; then echo "❌ Show analytics intent failed ($SA1_CODE)"; echo "$SA1_BODY"; exit 1; fi
+          echo "$SA1_BODY" | grep -q '"action"' || (echo "❌ missing action field"; exit 1)
+          echo "$SA1_BODY" | grep -q 'show_analytics' || (echo "❌ action should be show_analytics"; exit 1)
+          echo "$SA1_BODY" | grep -qi 'performance\|fill rate\|agents' || (echo "❌ response missing analytics data"; exit 1)
+          echo "✅ Show analytics action executed successfully"
+          
+          echo "→ POST /api/ai/assistant with 'notify agent' intent (dispatcher)"
+          NA1=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"query":"Notify agent Sarah about the new shift","role":"dispatcher"}')
+          NA1_CODE=$(echo "$NA1" | tail -n1)
+          NA1_BODY=$(echo "$NA1" | head -n-1)
+          if [ "$NA1_CODE" != "200" ]; then echo "❌ Notify agent intent failed ($NA1_CODE)"; echo "$NA1_BODY"; exit 1; fi
+          echo "$NA1_BODY" | grep -q '"action"' || (echo "❌ missing action field"; exit 1)
+          echo "$NA1_BODY" | grep -q 'notify_agent' || (echo "❌ action should be notify_agent"; exit 1)
+          echo "$NA1_BODY" | grep -qi 'notification sent\|notified' || (echo "❌ response missing notification confirmation"; exit 1)
+          echo "✅ Notify agent action executed successfully"
+          
+          echo "→ Verify agent role CANNOT execute write actions (RBAC enforcement)"
+          AGENT_WRITE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${AGENT_TOKEN}" \
+            -d '{"query":"Create a shift tomorrow","role":"agent"}')
+          AGENT_WRITE_CODE=$(echo "$AGENT_WRITE" | tail -n1)
+          AGENT_WRITE_BODY=$(echo "$AGENT_WRITE" | head -n-1)
+          
+          # Agent should get 403 for write actions OR a message saying they don't have permission
+          if [ "$AGENT_WRITE_CODE" = "403" ]; then
+            echo "✅ Agent properly blocked from write actions (403)"
+          elif echo "$AGENT_WRITE_BODY" | grep -qi 'permission\|not authorized\|cannot'; then
+            echo "✅ Agent write action denied with permission message"
+          else
+            echo "❌ Agent should be blocked from executing write actions"
+            echo "Response code: $AGENT_WRITE_CODE"
+            echo "Response body: $AGENT_WRITE_BODY"
+            exit 1
+          fi
+          
+          echo "→ Verify intent detection and action execution flow"
+          echo "$CS1_BODY" | grep -q 'intent' || (echo "⚠️  Warning: intent field may be missing from response")
+          echo "$CS1_BODY" | grep -q 'confidence' || (echo "⚠️  Warning: confidence field may be missing from response")
+          echo "$CS1_BODY" | grep -q 'actionDetails' || (echo "⚠️  Warning: actionDetails field may be missing from response")
+          
+          echo "→ Test suggested actions are role-aware"
+          SUGGEST=$(curl -s -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"query":"Help me","role":"admin"}')
+          echo "$SUGGEST" | grep -q 'suggestedActions\|suggested' && echo "✅ Suggested actions present" || echo "⚠️  No suggested actions in response"
+          
+          echo "✅ Stage 19 AI Action Automation tests passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}
