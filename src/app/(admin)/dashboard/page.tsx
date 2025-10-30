@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import PageBreadCrumb from '@/components/common/PageBreadCrumb';
+import { AvailabilityLineChart } from './components/AvailabilityLineChart';
+import { AssignmentBarChart } from './components/AssignmentBarChart';
+import { StatusPieChart } from './components/StatusPieChart';
 
 interface DashboardRecord {
   agent_id?: string;
@@ -13,12 +16,15 @@ interface DashboardRecord {
   notes?: string | null;
 }
 
+type ViewMode = 'table' | 'charts';
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -54,15 +60,82 @@ export default function DashboardPage() {
     fetchDashboardData();
   }, [dateFilter, statusFilter]);
 
+  const exportToCSV = () => {
+    if (data.length === 0) return;
+    
+    const headers = ['Agent Name', 'Availability Date', 'Start Time', 'End Time', 'Assignment Status', 'Notes'];
+    const csvData = data.map(record => [
+      record.agent_name,
+      record.availability_date,
+      record.start_time,
+      record.end_time,
+      record.assignment_status,
+      record.notes || '-'
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...csvData.map(row => row.join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `dashboard-data-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <>
       <PageBreadCrumb pageTitle="Dashboard" />
       
       <div className="rounded-sm border border-stroke bg-white px-7.5 py-6 shadow-default dark:border-strokedark dark:bg-boxdark">
         <div className="mb-6">
-          <h2 className="text-xl font-semibold text-black dark:text-white mb-4">
-            Agent Availability & Assignments
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-black dark:text-white">
+              Agent Availability & Assignments
+            </h2>
+            
+            <div className="flex gap-3">
+              {/* View Toggle */}
+              <button
+                onClick={() => setViewMode(viewMode === 'table' ? 'charts' : 'table')}
+                className="rounded bg-primary py-2 px-4 font-medium text-white hover:shadow-1 flex items-center gap-2"
+              >
+                {viewMode === 'table' ? (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    Show Charts
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Show Table
+                  </>
+                )}
+              </button>
+              
+              {/* Export CSV */}
+              <button
+                onClick={exportToCSV}
+                disabled={data.length === 0}
+                className="rounded bg-success py-2 px-4 font-medium text-white hover:shadow-1 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Export CSV
+              </button>
+            </div>
+          </div>
           
           {/* Filters */}
           <div className="flex gap-4 mb-4">
@@ -121,8 +194,19 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Charts View */}
+        {!loading && !error && viewMode === 'charts' && (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-2 2xl:gap-7.5">
+            <AvailabilityLineChart data={data} />
+            <AssignmentBarChart data={data} />
+            <div className="md:col-span-2">
+              <StatusPieChart data={data} />
+            </div>
+          </div>
+        )}
+
         {/* Data Table */}
-        {!loading && !error && (
+        {!loading && !error && viewMode === 'table' && (
           <div className="max-w-full overflow-x-auto">
             <table className="w-full table-auto">
               <thead>

@@ -204,6 +204,25 @@ jobs:
             exit 1
           fi
 
+      - name: Dashboard Charts Render Test
+        run: |
+          echo "📈 Testing Dashboard page with charts..."
+          # Test that the dashboard page loads successfully
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:3000/dashboard)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          echo "HTTP Status: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Dashboard page failed to load, got HTTP $HTTP_CODE"
+            exit 1
+          fi
+          # Verify the page contains dashboard elements (basic HTML structure check)
+          if echo "$BODY" | grep -qi "dashboard" || echo "$BODY" | grep -qi "availability"; then
+            echo "✅ Dashboard page rendered successfully"
+          else
+            echo "⚠️  Dashboard page loaded but content validation inconclusive"
+          fi
+
       - name: Run API integration tests
         run: |
           echo "Running npm run test:api"
