@@ -4,6 +4,7 @@ import './globals.css';
 import { SidebarProvider } from '@/context/SidebarContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import Notifications from '@/components/Notifications';
+import AssistantButton from '@/components/AssistantButton';
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -23,6 +24,7 @@ export default function RootLayout({
           <SidebarProvider>
             {children}
             <Notifications />
+            <AssistantButton />
           </SidebarProvider>
         </ThemeProvider>
       </body>

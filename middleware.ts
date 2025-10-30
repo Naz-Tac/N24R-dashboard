@@ -65,6 +65,10 @@ function checkAccess(path: string, role: string | undefined) {
     if (path.startsWith('/org')) {
       return role === 'manager' || role === 'admin' || role === 'dispatcher';
     }
+  // AI assistant API: all authenticated roles
+  if (path.startsWith('/api/ai/')) {
+    return role === 'admin' || role === 'dispatcher' || role === 'manager' || role === 'agent';
+  }
   // API routes are handled primarily by route-level RBAC; allow here
   if (path.startsWith('/api/')) return true;
   // Default: allow

@@ -887,6 +887,64 @@ jobs:
           
           echo "✅ Stage 17 deployment readiness check passed"
 
+      - name: Stage 18 – AI Assistant Smoke Test
+        env:
+          AI_ASSISTANT_MOCK: '1'
+        run: |
+          echo "🤖 Stage 18: AI Assistant endpoint tests"
+          
+          echo "→ POST /api/ai/assistant as ADMIN (analytics query)"
+          A1=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"query":"How do I view analytics?","role":"admin"}')
+          A1_CODE=$(echo "$A1" | tail -n1)
+          A1_BODY=$(echo "$A1" | head -n-1)
+          if [ "$A1_CODE" != "200" ]; then echo "❌ AI assistant as admin failed ($A1_CODE)"; echo "$A1_BODY"; exit 1; fi
+          echo "$A1_BODY" | grep -q 'response' || (echo "❌ missing response field"; exit 1)
+          echo "$A1_BODY" | grep -qi 'analytics' || (echo "❌ response missing analytics guidance"; exit 1)
+          
+          echo "→ POST /api/ai/assistant as MANAGER (org query)"
+          M1=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${M_TOKEN}" \
+            -d '{"query":"How do I manage my roster?","role":"manager"}')
+          M1_CODE=$(echo "$M1" | tail -n1)
+          M1_BODY=$(echo "$M1" | head -n-1)
+          if [ "$M1_CODE" != "200" ]; then echo "❌ AI assistant as manager failed ($M1_CODE)"; echo "$M1_BODY"; exit 1; fi
+          echo "$M1_BODY" | grep -q 'response' || (echo "❌ missing response field"; exit 1)
+          echo "$M1_BODY" | grep -qi 'roster\|organization' || (echo "❌ response missing org guidance"; exit 1)
+          
+          echo "→ POST /api/ai/assistant as AGENT (assignment query)"
+          AG1=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${AGENT_TOKEN}" \
+            -d '{"query":"How do I accept a shift?","role":"agent"}')
+          AG1_CODE=$(echo "$AG1" | tail -n1)
+          AG1_BODY=$(echo "$AG1" | head -n-1)
+          if [ "$AG1_CODE" != "200" ]; then echo "❌ AI assistant as agent failed ($AG1_CODE)"; echo "$AG1_BODY"; exit 1; fi
+          echo "$AG1_BODY" | grep -q 'response' || (echo "❌ missing response field"; exit 1)
+          echo "$AG1_BODY" | grep -qi 'accept\|assignment\|shift' || (echo "❌ response missing assignment guidance"; exit 1)
+          
+          echo "→ Verify role-specific responses differ"
+          if [ "$A1_BODY" = "$M1_BODY" ] || [ "$A1_BODY" = "$AG1_BODY" ] || [ "$M1_BODY" = "$AG1_BODY" ]; then
+            echo "⚠️  Warning: Role-specific responses may be too similar"
+          else
+            echo "✅ Role-specific responses are distinct"
+          fi
+          
+          echo "→ Test unauthorized access (no token)"
+          UNAUTH=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -d '{"query":"test"}')
+          if [ "$UNAUTH" != "401" ] && [ "$UNAUTH" != "403" ]; then
+            echo "❌ Unauthorized access should return 401/403, got $UNAUTH"
+            exit 1
+          fi
+          echo "✅ Unauthorized access properly blocked"
+          
+          echo "✅ Stage 18 AI Assistant tests passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}
