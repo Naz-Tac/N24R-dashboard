@@ -78,6 +78,12 @@ jobs:
             exit 1
           )
 
+      - name: Confirm Supabase envs loaded
+        run: |
+          echo "NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-not set}"
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:+[present]}"
+          echo "SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:+[present]}"
+
       - name: Run API integration tests
         run: |
           echo "Running npm run test:api"
