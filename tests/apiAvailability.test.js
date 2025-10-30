@@ -64,8 +64,8 @@ async function fetcher(...args) {
   const payload = {
     agent_name: 'Test Agent',
     availability_date: dateStr,
-    start_time: '09:00',
-    end_time: '17:00',
+    start_time: '09:00:00',
+    end_time: '17:00:00',
     notes: null  // explicitly include notes field (nullable in schema)
   };
 

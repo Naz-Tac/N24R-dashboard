@@ -91,8 +91,8 @@ jobs:
           DATE=$(date -u +%F)
           START_MIN=$(printf "%02d" $((RANDOM % 60)))
           END_MIN=$(printf "%02d" $(((10 + RANDOM) % 60)))
-          START="10:${START_MIN}"
-          END="16:${END_MIN}"
+          START="10:${START_MIN}:00"
+          END="16:${END_MIN}:00"
           NAME="CI Test ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           PAYLOAD=$(printf '{"agent_name":"%s","availability_date":"%s","start_time":"%s","end_time":"%s","notes":null}' "${NAME}" "${DATE}" "${START}" "${END}")
           echo "Using payload: $PAYLOAD"
