@@ -47,13 +47,33 @@ export async function POST(request: Request) {
       }, { status: 500 });
     }
     const body = await request.json();
-    
-    const record: Omit<AgentAvailability, 'id'> = {
-      agent_name: body.agent_name,
-      availability_date: body.availability_date,
-      start_time: body.start_time,
-      end_time: body.end_time
+
+    // Normalize time strings to HH:mm:ss (Postgres time type friendly)
+    const normalizeTime = (t: unknown): string => {
+      if (typeof t !== 'string') return '';
+      // If already has seconds, return as-is
+      if (/^\d{2}:\d{2}:\d{2}$/.test(t)) return t;
+      // If HH:mm, append :00
+      if (/^\d{2}:\d{2}$/.test(t)) return `${t}:00`;
+      // Fallback: try to coerce, else empty
+      const m = /^\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\s*$/.exec(t);
+      if (m) {
+        const hh = String(Math.min(23, parseInt(m[1], 10))).padStart(2, '0');
+        const mm = String(Math.min(59, parseInt(m[2], 10))).padStart(2, '0');
+        const ss = String(Math.min(59, m[3] ? parseInt(m[3], 10) : 0)).padStart(2, '0');
+        return `${hh}:${mm}:${ss}`;
+      }
+      return '';
     };
+
+    const record: Omit<AgentAvailability, 'id'> = {
+      agent_name: String(body.agent_name ?? ''),
+      availability_date: String(body.availability_date ?? ''),
+      start_time: normalizeTime(body.start_time),
+      end_time: normalizeTime(body.end_time)
+    };
+
+    console.log('🧾 Sanitized payload:', record);
 
     const { data, error } = await supabaseService
       .from("agent_availability")
