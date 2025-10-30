@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import PageBreadCrumb from '@/components/common/PageBreadCrumb';
 import { AvailabilityLineChart } from './components/AvailabilityLineChart';
 import { AssignmentBarChart } from './components/AssignmentBarChart';
 import { StatusPieChart } from './components/StatusPieChart';
+import { useRealtimeUpdates } from '@/lib/useRealtimeUpdates';
+import { showNotification } from '@/components/Notifications';
 
 interface DashboardRecord {
   agent_id?: string;
@@ -25,6 +27,7 @@ export default function DashboardPage() {
   const [dateFilter, setDateFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -55,6 +58,43 @@ export default function DashboardPage() {
       setLoading(false);
     }
   };
+
+    // Debounced refresh to prevent excessive re-renders
+    const debouncedRefresh = useCallback(() => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    
+      debounceTimerRef.current = setTimeout(() => {
+        fetchDashboardData();
+      }, 2000); // 2 second debounce
+    }, [dateFilter, statusFilter]);
+
+    // Subscribe to agent_availability changes
+    useRealtimeUpdates({
+      table: 'agent_availability',
+      onChange: (payload) => {
+        console.log('[Dashboard] Availability change detected:', payload.eventType);
+        showNotification(
+          '🔄 Dashboard updated — new availability data received',
+          'update'
+        );
+        debouncedRefresh();
+      },
+    });
+
+    // Subscribe to assignments changes
+    useRealtimeUpdates({
+      table: 'assignments',
+      onChange: (payload) => {
+        console.log('[Dashboard] Assignment change detected:', payload.eventType);
+        showNotification(
+          '🔄 Dashboard updated — assignment data changed',
+          'update'
+        );
+        debouncedRefresh();
+      },
+    });
 
   useEffect(() => {
     fetchDashboardData();

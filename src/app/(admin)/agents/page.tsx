@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import PageBreadCrumb from '@/components/common/PageBreadCrumb';
+import { useRealtimeUpdates } from '@/lib/useRealtimeUpdates';
+import { showNotification } from '@/components/Notifications';
 
 interface Agent {
   id: string;
@@ -50,6 +52,26 @@ export default function AgentsPage() {
       setLoading(false);
     }
   };
+
+  // Subscribe to agents table changes
+  useRealtimeUpdates<Agent>({
+    table: 'agents',
+    onInsert: (record) => {
+      console.log('[Agents] New agent added:', record.name);
+      showNotification(`✅ New agent added: ${record.name}`, 'success');
+      fetchAgents();
+    },
+    onUpdate: (record) => {
+      console.log('[Agents] Agent updated:', record.name);
+      showNotification(`🔄 Agent updated: ${record.name}`, 'update');
+      fetchAgents();
+    },
+    onDelete: (record) => {
+      console.log('[Agents] Agent deleted:', record.name);
+      showNotification(`🗑️ Agent deleted: ${record.name}`, 'delete');
+      fetchAgents();
+    },
+  });
 
   const openAddModal = () => {
     setFormData({ name: '', email: '', role: '', status: 'active' });

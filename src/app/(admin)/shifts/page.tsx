@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import PageBreadCrumb from '@/components/common/PageBreadCrumb';
+import { useRealtimeUpdates } from '@/lib/useRealtimeUpdates';
+import { showNotification } from '@/components/Notifications';
 
 interface Shift {
   id: string;
@@ -52,6 +54,29 @@ export default function ShiftsPage() {
       setLoading(false);
     }
   };
+
+  // Subscribe to shifts table changes
+  useRealtimeUpdates<Shift>({
+    table: 'shifts',
+    onInsert: (record) => {
+      const shiftDate = new Date(record.date).toLocaleDateString();
+      console.log('[Shifts] New shift added:', shiftDate);
+      showNotification(`✅ New shift added for ${shiftDate}`, 'success');
+      fetchShifts();
+    },
+    onUpdate: (record) => {
+      const shiftDate = new Date(record.date).toLocaleDateString();
+      console.log('[Shifts] Shift updated:', shiftDate);
+      showNotification(`🔄 Shift updated for ${shiftDate}`, 'update');
+      fetchShifts();
+    },
+    onDelete: (record) => {
+      const shiftDate = new Date(record.date).toLocaleDateString();
+      console.log('[Shifts] Shift deleted:', shiftDate);
+      showNotification(`🗑️ Shift deleted for ${shiftDate}`, 'delete');
+      fetchShifts();
+    },
+  });
 
   const openAddModal = () => {
     setFormData({ date: '', start_time: '', end_time: '', location: '', notes: '' });
