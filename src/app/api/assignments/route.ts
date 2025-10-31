@@ -7,7 +7,7 @@ import { requireRole } from "@/lib/rbac";
 export async function GET(req: NextRequest) {
   try {
     console.log('📝 GET request to /api/assignments');
-    const auth = await requireRole(req, ['admin', 'dispatcher']);
+  const auth = await requireRole(req, ['admin', 'dispatcher', 'manager']);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.message }, { status: auth.status });
     }
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     console.log('📝 POST request to /api/assignments');
-    const auth = await requireRole(request, ['admin', 'dispatcher']);
+  const auth = await requireRole(request, ['admin', 'dispatcher', 'manager']);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.message }, { status: auth.status });
     }

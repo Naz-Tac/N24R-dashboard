@@ -1206,6 +1206,72 @@ jobs:
 
           echo "✅ Stage 21 AI Usage Analytics passed"
 
+      - name: Stage 22 – Predictive AI Dispatch Tests
+        env:
+          AI_PREDICT_MOCK: '1'
+        run: |
+          echo "🤖 Stage 22: Predictive AI Dispatch & Smart Recommendations"
+
+          echo "→ Predict with admin token"
+          PRED_BODY='{"shift_id":"shft-123","organization_id":"'"${ORG_ID}"'","criteria":["availability","past_acceptance","credentials"]}'
+          PRED_CODE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "$PRED_BODY" | tee pred.json | tail -n1)
+          if [ "$PRED_CODE" != "200" ]; then echo "❌ Predict failed ($PRED_CODE)"; exit 1; fi
+          if ! grep -q '"recommendations"' pred.json; then echo "❌ Missing recommendations array"; exit 1; fi
+          # Extract scores
+          SCORES=$(grep -o '"score":[0-9][0-9]*\.[0-9][0-9]*' pred.json | sed 's/"score"://g')
+          FIRST_SCORE=$(echo "$SCORES" | head -n1)
+          LAST_SCORE=$(echo "$SCORES" | tail -n1)
+          if [ -z "$FIRST_SCORE" ]; then echo "❌ No scores found"; exit 1; fi
+          # Ensure 0<=score<=1 and non-increasing first>=last
+          echo "$SCORES" | awk '{ if ($1<0 || $1>1) {e=1} } END { exit e }' || { echo "❌ Score outside 0..1"; exit 1; }
+          awk -v a="$FIRST_SCORE" -v b="$LAST_SCORE" 'BEGIN{ if (a<b) exit 1; else exit 0 }' || { echo "❌ Scores not descending"; exit 1; }
+
+          echo "→ Auto-assign top agent"
+          AA_CODE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"shift_id":"shft-124","organization_id":"'"${ORG_ID}"'","criteria":["availability"],"auto_assign":true}' | tee aa.json | tail -n1)
+          if [ "$AA_CODE" != "200" ]; then echo "❌ Auto-assign request failed ($AA_CODE)"; exit 1; fi
+          if ! grep -q '"auto_assigned":true' aa.json; then echo "❌ Auto-assign not indicated"; exit 1; fi
+          if ! grep -q '"assignment_id"' aa.json; then echo "❌ assignment_id missing"; exit 1; fi
+
+          echo "→ Manager token works for own org"
+          MP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${M_TOKEN}" \
+            -d "$PRED_BODY")
+          if [ "$MP_CODE" != "200" ]; then echo "❌ Manager predict failed ($MP_CODE)"; exit 1; fi
+
+          echo "→ Manager cannot predict other org"
+          MPF=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${M_TOKEN}" \
+            -d '{"shift_id":"shft-999","organization_id":"org-not-mine","criteria":["availability"]}')
+          if [ "$MPF" = "200" ]; then echo "❌ Manager should be forbidden for other org"; exit 1; fi
+
+          echo "→ Agent forbidden"
+          AGF=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${AGENT_TOKEN}" \
+            -d "$PRED_BODY")
+          if [ "$AGF" = "200" ]; then echo "❌ Agent should be forbidden"; exit 1; fi
+
+          echo "→ Stability: same inputs yield same top recommendation"
+          PRED2_CODE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d "$PRED_BODY" | tee pred2.json | tail -n1)
+          if [ "$PRED2_CODE" != "200" ]; then echo "❌ Predict 2 failed ($PRED2_CODE)"; exit 1; fi
+          A1=$(sed -n 's/.*"agent_id":"\([^"]*\)".*/\1/p' pred.json | head -n1)
+          A2=$(sed -n 's/.*"agent_id":"\([^"]*\)".*/\1/p' pred2.json | head -n1)
+          S1=$(sed -n 's/.*"score":\([0-9]\+\.[0-9]\+\).*/\1/p' pred.json | head -n1)
+          S2=$(sed -n 's/.*"score":\([0-9]\+\.[0-9]\+\).*/\1/p' pred2.json | head -n1)
+          if [ "$A1" != "$A2" ] || [ "$S1" != "$S2" ]; then echo "❌ Mock output not stable"; exit 1; fi
+
+          echo "✅ Stage 22 Predictive AI Dispatch passed"
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}

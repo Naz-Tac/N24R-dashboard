@@ -71,6 +71,11 @@ function checkAccess(path: string, role: string | undefined) {
     }
   // AI assistant API: all authenticated roles
   if (path.startsWith('/api/ai/')) {
+    // Predict endpoint: admin/manager/dispatcher only
+    if (path.startsWith('/api/ai/predict')) {
+      return role === 'admin' || role === 'dispatcher' || role === 'manager';
+    }
+    // Other AI endpoints: all authenticated roles
     return role === 'admin' || role === 'dispatcher' || role === 'manager' || role === 'agent';
   }
   // API routes are handled primarily by route-level RBAC; allow here
