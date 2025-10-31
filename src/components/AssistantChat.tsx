@@ -32,6 +32,9 @@ export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: A
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [suggestedActions, setSuggestedActions] = useState<string[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<Array<{ id: string; type: string; content: string; timestamp: string }>>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -56,6 +59,32 @@ export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: A
       ]);
     }
   }, [userRole]);
+
+  async function fetchHistory() {
+    try {
+      setHistoryLoading(true);
+      const res = await fetch('/api/ai/memory?limit=10', { method: 'GET' });
+      const data = await res.json();
+      if (res.ok) {
+        setHistory(data.data || []);
+      }
+    } catch (e) {
+      // ignore
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function clearMemory() {
+    try {
+      const res = await fetch('/api/ai/memory', { method: 'DELETE' });
+      if (res.ok) {
+        setHistory([]);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
 
   function getWelcomeMessage(role: string): string {
     switch (role) {
@@ -170,16 +199,64 @@ export default function AssistantChat({ isOpen, onClose, userRole = 'agent' }: A
                 <p className="text-xs text-slate-500 dark:text-slate-400">Always here to help</p>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="rounded-full p-1 hover:bg-gray-100 dark:hover:bg-gray-800"
-              aria-label="Close assistant"
-            >
-              <svg className="h-5 w-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={async () => { setShowHistory((s) => !s); if (!showHistory) await fetchHistory(); }}
+                className="rounded-md px-2 py-1 text-xs text-slate-600 hover:bg-gray-100 dark:text-slate-300 dark:hover:bg-gray-800"
+              >
+                Memory
+              </button>
+              <button
+                onClick={onClose}
+                className="rounded-full p-1 hover:bg-gray-100 dark:hover:bg-gray-800"
+                aria-label="Close assistant"
+              >
+                <svg className="h-5 w-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
+
+          {/* Memory Panel */}
+          {showHistory && (
+            <div className="border-b border-stroke px-4 py-3 text-sm text-slate-700 transition-all dark:border-strokedark dark:text-slate-200">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="font-medium">Conversation History (last 10)</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchHistory}
+                    className="rounded-md bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    onClick={clearMemory}
+                    className="rounded-md bg-rose-100 px-2 py-1 text-xs text-rose-700 hover:bg-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:hover:bg-rose-900/50"
+                  >
+                    Clear Memory
+                  </button>
+                </div>
+              </div>
+              {historyLoading ? (
+                <p className="text-xs italic text-slate-500">Loading...</p>
+              ) : history.length === 0 ? (
+                <p className="text-xs italic text-slate-500">No memory yet.</p>
+              ) : (
+                <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
+                  {history.map((h) => (
+                    <li key={h.id} className="flex items-start gap-2">
+                      <span className="mt-0.5 inline-block h-2 w-2 flex-shrink-0 rounded-full bg-slate-400" />
+                      <div>
+                        <div className="opacity-70">{new Date(h.timestamp).toLocaleString()}</div>
+                        <div className="opacity-90">[{h.type}] {h.content}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           {/* Messages */}
           <div className="h-96 overflow-y-auto p-4 space-y-4">

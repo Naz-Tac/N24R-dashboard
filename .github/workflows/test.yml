@@ -1037,6 +1037,65 @@ jobs:
           
           echo "✅ Stage 19 AI Action Automation tests passed"
 
+      - name: Stage 20 – AI Memory & Adaptive Learning
+        env:
+          AI_ASSISTANT_MOCK: '1'
+        run: |
+          echo "🧠 Stage 20: AI Memory & Adaptive Learning"
+
+          echo "→ POST /api/ai/memory (append one entry)"
+          MEM_POST=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/memory \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"type":"user_message","content":"Hello memory!"}')
+          MEM_POST_CODE=$(echo "$MEM_POST" | tail -n1)
+          MEM_POST_BODY=$(echo "$MEM_POST" | head -n-1)
+          if [ "$MEM_POST_CODE" != "201" ]; then echo "❌ Memory POST failed ($MEM_POST_CODE)"; echo "$MEM_POST_BODY"; exit 1; fi
+          echo "$MEM_POST_BODY" | grep -q '"data"' || (echo "❌ Memory POST missing data"; exit 1)
+
+          echo "→ GET /api/ai/memory (should include entry)"
+          MEM_GET=$(curl -s -w "\n%{http_code}" -X GET "http://localhost:3000/api/ai/memory?limit=10" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
+          MEM_GET_CODE=$(echo "$MEM_GET" | tail -n1)
+          MEM_GET_BODY=$(echo "$MEM_GET" | head -n-1)
+          if [ "$MEM_GET_CODE" != "200" ]; then echo "❌ Memory GET failed ($MEM_GET_CODE)"; echo "$MEM_GET_BODY"; exit 1; fi
+          echo "$MEM_GET_BODY" | grep -qi 'hello memory' || (echo "❌ Memory GET missing expected content"; exit 1)
+
+          echo "→ DELETE /api/ai/memory (clear)"
+          MEM_DEL=$(curl -s -w "\n%{http_code}" -X DELETE http://localhost:3000/api/ai/memory \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}")
+          MEM_DEL_CODE=$(echo "$MEM_DEL" | tail -n1)
+          if [ "$MEM_DEL_CODE" != "200" ]; then echo "❌ Memory DELETE failed ($MEM_DEL_CODE)"; echo "$MEM_DEL"; exit 1; fi
+
+          echo "→ Verify context persistence and follow-up suggestion"
+          C1=$(curl -s -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"query":"Create a shift tomorrow 9-5","role":"admin"}')
+          echo "$C1" | grep -q 'create_shift' || (echo "❌ First action should detect create_shift"; exit 1)
+          C2=$(curl -s -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"query":"What should I do next?","role":"admin"}')
+          echo "$C2" | grep -qi 'assign\|Assign agent' || (echo "❌ Follow-up should suggest assigning agent"; exit 1)
+
+          echo "→ Adaptive suggestions after repeated intents"
+          for i in 1 2 3; do
+            curl -s -X POST http://localhost:3000/api/ai/assistant \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+              -d '{"query":"Show analytics summary","role":"admin"}' > /dev/null
+          done
+          SUG=$(curl -s -X POST http://localhost:3000/api/ai/assistant \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"query":"Help me","role":"admin"}')
+          FIRST=$(echo "$SUG" | sed -n 's/.*\"suggestedActions\":\[\"\([^\"]*\)\".*/\1/p')
+          echo "Top suggestion: $FIRST"
+          echo "$FIRST" | grep -qi 'analytics' || echo "⚠️  Top suggestion may not reflect adaptive ranking"
+
+          echo "✅ Stage 20 AI Memory & Adaptive Learning passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}

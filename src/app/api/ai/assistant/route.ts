@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/rbac';
+import { AiMemoryStore } from '@/lib/inMemoryStore';
 
 type AssistantRole = 'admin' | 'dispatcher' | 'manager' | 'agent';
 
@@ -406,8 +407,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 });
     }
 
-    // Use role from body if provided, otherwise use authenticated role
-    const role = (body.role || auth.role) as AssistantRole;
+  // Use role from body if provided, otherwise use authenticated role
+  const role = (body.role || auth.role) as AssistantRole;
+
+  // Load recent memory (last 10 entries)
+  const recentMemory = AiMemoryStore.listByUser(auth.userId!, 10);
 
     // Detect intent from query
     const intent = detectIntent(query);
@@ -415,6 +419,29 @@ export async function POST(req: NextRequest) {
     // If action intent detected and confidence is high, execute the action
     if (intent.type !== 'none' && intent.confidence > 0.7) {
       const actionResult = await executeAction(intent, role, req);
+      // Append memory entries (user message + assistant action summary)
+      AiMemoryStore.add({
+        user_id: auth.userId!,
+        role,
+        timestamp: new Date().toISOString(),
+        type: 'user_message',
+        content: query,
+        intent: intent.type,
+        action: null,
+        action_details: null,
+      });
+      AiMemoryStore.add({
+        user_id: auth.userId!,
+        role,
+        timestamp: new Date().toISOString(),
+        type: 'action',
+        content: actionResult.message,
+        intent: intent.type,
+        action: actionResult.action,
+        action_details: actionResult.details,
+      });
+      // Purge old
+      AiMemoryStore.purgeOlderThan(30);
       
       return NextResponse.json({
         success: actionResult.success,
@@ -428,6 +455,7 @@ export async function POST(req: NextRequest) {
           actionDetails: actionResult.details,
           intent: intent.type,
           confidence: intent.confidence,
+          suggestedActions: getRankedSuggestions(role, auth.userId!, recentMemory, intent.type),
         },
       }, { status: actionResult.success ? 200 : 403 });
     }
@@ -435,6 +463,28 @@ export async function POST(req: NextRequest) {
     // No action intent, provide guidance
     if (useMock) {
       const response = generateMockResponse(query, role);
+      // Memory entries for conversational guidance
+      AiMemoryStore.add({
+        user_id: auth.userId!,
+        role,
+        timestamp: new Date().toISOString(),
+        type: 'user_message',
+        content: query,
+        intent: 'none',
+        action: null,
+        action_details: null,
+      });
+      AiMemoryStore.add({
+        user_id: auth.userId!,
+        role,
+        timestamp: new Date().toISOString(),
+        type: 'assistant_message',
+        content: response,
+        intent: 'none',
+        action: null,
+        action_details: null,
+      });
+      AiMemoryStore.purgeOlderThan(30);
       
       return NextResponse.json({
         success: true,
@@ -444,7 +494,7 @@ export async function POST(req: NextRequest) {
           role,
           timestamp: new Date().toISOString(),
           mode: 'mock',
-          suggestedActions: getSuggestedActions(role),
+          suggestedActions: getRankedSuggestions(role, auth.userId!, recentMemory, 'none'),
         },
       }, { status: 200 });
     }
@@ -461,7 +511,7 @@ export async function POST(req: NextRequest) {
         timestamp: new Date().toISOString(),
         mode: 'fallback',
         note: 'External AI not configured, using mock responses',
-        suggestedActions: getSuggestedActions(role),
+        suggestedActions: getRankedSuggestions(role, auth.userId!, recentMemory, 'none'),
       },
     }, { status: 200 });
   } catch (e: any) {
@@ -492,4 +542,67 @@ function getSuggestedActions(role: AssistantRole): string[] {
     'Show analytics summary',
     'Help with availability',
   ];
+}
+
+// Map intents to human-friendly suggestion prompts
+function suggestionForIntent(intent: string): string | null {
+  switch (intent) {
+    case 'create_shift':
+      return 'Create a shift tomorrow 9-5';
+    case 'assign_agent':
+      return 'Assign agent to next shift';
+    case 'notify_agent':
+      return 'Notify agent about assignment';
+    case 'show_analytics':
+      return 'Show analytics summary';
+    default:
+      return null;
+  }
+}
+
+// Ranked suggestions using memory and last intent context
+function getRankedSuggestions(
+  role: AssistantRole,
+  userId: string,
+  recentMemory: { intent?: string }[] = [],
+  lastIntent: string = 'none'
+): string[] {
+  const writeRoles = ['admin', 'manager', 'dispatcher'];
+  const defaults = getSuggestedActions(role);
+
+  const userTop = AiMemoryStore.topIntents({ user_id: userId, limit: 3 });
+  const roleTop = AiMemoryStore.topIntents({ role: role as any, limit: 3 });
+
+  const ranked: string[] = [];
+
+  // Contextual grounding: if last action was create_shift, suggest assign_agent first
+  if (lastIntent === 'create_shift' && writeRoles.includes(role)) {
+    const followUp = suggestionForIntent('assign_agent');
+    if (followUp) ranked.push(followUp);
+  }
+
+  // Add user's top intents
+  userTop.forEach((i) => {
+    const s = suggestionForIntent(i);
+    if (s) ranked.push(s);
+  });
+  // Add role's top intents
+  roleTop.forEach((i) => {
+    const s = suggestionForIntent(i);
+    if (s) ranked.push(s);
+  });
+  // Fill with defaults
+  defaults.forEach((d) => ranked.push(d));
+
+  // Deduplicate, keep order, cap length
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of ranked) {
+    if (!seen.has(s)) {
+      seen.add(s);
+      out.push(s);
+    }
+    if (out.length >= 5) break;
+  }
+  return out;
 }
