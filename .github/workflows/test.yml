@@ -1112,6 +1112,41 @@ jobs:
 
           echo "✅ Stage 20 AI Memory & Adaptive Learning passed"
 
+      - name: Stage 20b – RLS & Scoped Memory Security
+        env:
+          AI_ASSISTANT_MOCK: '1'
+        run: |
+          echo "🔐 Stage 20b: RLS enforcement for ai_memory"
+
+          # Ensure we have IDs
+          if [ -z "$ADMIN_ID" ] || [ -z "$AGENT_ID" ]; then
+            echo "❌ Missing ADMIN_ID or AGENT_ID in env"
+            exit 1
+          fi
+
+          echo "→ Agent attempts to read admin's memory (should be forbidden)"
+          RLS1=$(curl -s -o /dev/null -w "%{http_code}" -X GET "http://localhost:3000/api/ai/memory?user_id=${ADMIN_ID}" \
+            -H "Authorization: Bearer ${AGENT_TOKEN}")
+          if [ "$RLS1" = "200" ]; then
+            echo "❌ Agent should not be able to view admin's memory"
+            exit 1
+          fi
+          echo "✅ Agent blocked (got $RLS1)"
+
+          echo "→ Admin can view agent's memory"
+          RLS2_CODE=$(curl -s -w "\n%{http_code}" -X GET "http://localhost:3000/api/ai/memory?user_id=${AGENT_ID}&limit=5" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" | tail -n1)
+          if [ "$RLS2_CODE" != "200" ]; then echo "❌ Admin failed to view agent memory ($RLS2_CODE)"; exit 1; fi
+          echo "✅ Admin can view agent memory"
+
+          echo "→ Unauthorized request (no token)"
+          RLS3=$(curl -s -o /dev/null -w "%{http_code}" -X GET http://localhost:3000/api/ai/memory)
+          if [ "$RLS3" != "401" ] && [ "$RLS3" != "403" ]; then
+            echo "❌ Unauthorized should return 401/403, got $RLS3"
+            exit 1
+          fi
+          echo "✅ Unauthorized properly blocked"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}

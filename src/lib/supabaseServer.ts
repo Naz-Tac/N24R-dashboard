@@ -55,6 +55,28 @@ export function createSupabaseMiddlewareClient(req: NextRequest, res: NextRespon
   return client;
 }
 
+// Route handler runtime: create a user-bound client from NextRequest cookies (no response binding)
+export function createSupabaseUserClient(req: NextRequest) {
+  const client = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      get(name: string) {
+        try {
+          return req.cookies.get(name)?.value;
+        } catch {
+          return undefined;
+        }
+      },
+      set() {
+        // no-op in route handlers without a response; we only need read access
+      },
+      remove() {
+        // no-op
+      },
+    },
+  });
+  return client;
+}
+
 // Helper: fetch current session on the server
 export async function getSession() {
   const supabase = createSupabaseServerClient();

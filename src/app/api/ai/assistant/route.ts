@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/rbac';
 import { AiMemoryStore } from '@/lib/inMemoryStore';
+import { createSupabaseUserClient } from '@/lib/supabaseServer';
 
 type AssistantRole = 'admin' | 'dispatcher' | 'manager' | 'agent';
 
@@ -410,8 +411,34 @@ export async function POST(req: NextRequest) {
   // Use role from body if provided, otherwise use authenticated role
   const role = (body.role || auth.role) as AssistantRole;
 
-  // Load recent memory (last 10 entries) using DB when available
-  const { rows: recentMemory } = await AiMemoryStore.getRecent(auth.userId!, 10);
+    // Load recent memory (last 10 entries) using user-bound client under RLS
+    let recentMemory: any[] = [];
+    try {
+      const supabaseUser = createSupabaseUserClient(req);
+      const { data, error } = await supabaseUser
+        .from('ai_memory')
+        .select('id,user_id,role,type,content,intent,created_at')
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (!error && Array.isArray(data)) {
+        recentMemory = data.map((d: any) => ({
+          id: d.id,
+          user_id: d.user_id,
+          role: d.role,
+          timestamp: d.created_at,
+          type: d.type,
+          content: d.content,
+          intent: d.intent || 'none',
+          action: null,
+          action_details: null,
+        }));
+        // hydrate local shadow for adaptive ranking
+        await AiMemoryStore.syncFromSupabase(auth.userId!, 50);
+      }
+    } catch {
+      const { rows } = await AiMemoryStore.getRecent(auth.userId!, 10, { forceFallback: true });
+      recentMemory = rows;
+    }
 
     // Detect intent from query
     const intent = detectIntent(query);
@@ -420,28 +447,26 @@ export async function POST(req: NextRequest) {
     if (intent.type !== 'none' && intent.confidence > 0.7) {
       const actionResult = await executeAction(intent, role, req);
       // Append memory entries (user message + assistant action summary)
-      await AiMemoryStore.append({
-        user_id: auth.userId!,
-        role,
-        timestamp: new Date().toISOString(),
-        type: 'user_message',
-        content: query,
-        intent: intent.type,
-        action: null,
-        action_details: null,
-      });
-      await AiMemoryStore.append({
-        user_id: auth.userId!,
-        role,
-        timestamp: new Date().toISOString(),
-        type: 'action',
-        content: actionResult.message,
-        intent: intent.type,
-        action: actionResult.action,
-        action_details: actionResult.details,
-      });
-      // Purge old
-      await AiMemoryStore.purgeOlderThan(30);
+      try {
+        const supabaseUser = createSupabaseUserClient(req);
+        // user message
+        await supabaseUser.from('ai_memory').insert({
+          user_id: auth.userId!, role, type: 'user_message', content: query, intent: intent.type,
+        });
+        // action summary
+        await supabaseUser.from('ai_memory').insert({
+          user_id: auth.userId!, role, type: 'action', content: actionResult.message, intent: intent.type,
+        });
+        // purge old
+        await supabaseUser.from('ai_memory')
+          .delete()
+          .lt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+      } catch {
+        // fallback local shadow
+        await AiMemoryStore.append({ user_id: auth.userId!, role, timestamp: new Date().toISOString(), type: 'user_message', content: query, intent: intent.type, action: null, action_details: null }, { forceFallback: true });
+        await AiMemoryStore.append({ user_id: auth.userId!, role, timestamp: new Date().toISOString(), type: 'action', content: actionResult.message, intent: intent.type, action: actionResult.action, action_details: actionResult.details }, { forceFallback: true });
+        await AiMemoryStore.purgeOlderThan(30);
+      }
       
       return NextResponse.json({
         success: actionResult.success,
@@ -464,27 +489,18 @@ export async function POST(req: NextRequest) {
     if (useMock) {
       const response = generateMockResponse(query, role);
       // Memory entries for conversational guidance
-      await AiMemoryStore.append({
-        user_id: auth.userId!,
-        role,
-        timestamp: new Date().toISOString(),
-        type: 'user_message',
-        content: query,
-        intent: 'none',
-        action: null,
-        action_details: null,
-      });
-      await AiMemoryStore.append({
-        user_id: auth.userId!,
-        role,
-        timestamp: new Date().toISOString(),
-        type: 'assistant_message',
-        content: response,
-        intent: 'none',
-        action: null,
-        action_details: null,
-      });
-      await AiMemoryStore.purgeOlderThan(30);
+      try {
+        const supabaseUser = createSupabaseUserClient(req);
+        await supabaseUser.from('ai_memory').insert({ user_id: auth.userId!, role, type: 'user_message', content: query, intent: 'none' });
+        await supabaseUser.from('ai_memory').insert({ user_id: auth.userId!, role, type: 'assistant_message', content: response, intent: 'none' });
+        await supabaseUser.from('ai_memory')
+          .delete()
+          .lt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+      } catch {
+        await AiMemoryStore.append({ user_id: auth.userId!, role, timestamp: new Date().toISOString(), type: 'user_message', content: query, intent: 'none', action: null, action_details: null }, { forceFallback: true });
+        await AiMemoryStore.append({ user_id: auth.userId!, role, timestamp: new Date().toISOString(), type: 'assistant_message', content: response, intent: 'none', action: null, action_details: null }, { forceFallback: true });
+        await AiMemoryStore.purgeOlderThan(30);
+      }
       
       return NextResponse.json({
         success: true,
