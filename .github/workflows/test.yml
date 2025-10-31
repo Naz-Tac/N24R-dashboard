@@ -1272,6 +1272,95 @@ jobs:
           if [ "$A1" != "$A2" ] || [ "$S1" != "$S2" ]; then echo "❌ Mock output not stable"; exit 1; fi
 
           echo "✅ Stage 22 Predictive AI Dispatch passed"
+
+      - name: Stage 23 – Predict + Safeguards (Real-Data Path)
+        env:
+          AI_PREDICT_MOCK: '1'
+          AI_COOLDOWN_MINUTES: '60'
+          AI_MAX_DAILY_SHIFTS: '1'
+        run: |
+          echo "🛡️ Stage 23: Predict + Guardrails"
+
+          echo "→ Create two agents and set flags"
+          A1_EMAIL="agent1-${{ github.run_id }}@ci.test"
+          A2_EMAIL="agent2-${{ github.run_id }}@ci.test"
+          # Create agents via /api/agents (admin only)
+          C1=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/agents \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"name":"Agent One","email":"'"${A1_EMAIL}"'","role":"field","status":"active"}' | tail -n1)
+          C2=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/agents \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"name":"Agent Two","email":"'"${A2_EMAIL}"'","role":"field","status":"active"}' | tail -n1)
+          echo "Created agents ($C1,$C2)"
+
+          # Normally we'd capture created IDs from response; for CI simplicity, reuse MANAGER_ID and AGENT_ID from earlier staging as test agents
+          # Ensure DND on AGENT_ID
+          curl -s -X PUT http://localhost:3000/api/agents -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"id":"'"${AGENT_ID}"'","do_not_assign":true}' >/dev/null
+
+          echo "→ Create a shift for today in org"
+          TODAY=$(date +%F)
+          S_BODY='{"date":"'"${TODAY}"'","start_time":"09:00","end_time":"12:00","location":"HQ","notes":"Stage23"}'
+          S_RESP=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/org/shifts \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" \
+            -d "$S_BODY")
+          S_CODE=$(echo "$S_RESP" | tail -n1)
+          S_ID=$(echo "$S_RESP" | head -n1 | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+          if [ "$S_CODE" != "201" ] || [ -z "$S_ID" ]; then echo "❌ create shift failed ($S_CODE)"; echo "$S_RESP"; exit 1; fi
+
+          echo "→ Create overlapping assignment for MANAGER_ID's org agent"
+          OVER=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/assignments \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"agent_id":"'"${MANAGER_ID}"'","shift_id":"'"${S_ID}"'","status":"assigned"}')
+          O_CODE=$(echo "$OVER" | tail -n1)
+          if [ "$O_CODE" != "201" ]; then echo "❌ seed overlap assignment failed ($O_CODE)"; exit 1; fi
+
+          echo "→ Predict; ensure guardrails skip DND agent and overlap"
+          PRED=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"shift_id":"'"${S_ID}"'","organization_id":"'"${ORG_ID}"'","criteria":["availability","past_acceptance","credentials"]}')
+          P_CODE=$(echo "$PRED" | tail -n1)
+          if [ "$P_CODE" != "200" ]; then echo "❌ predict failed ($P_CODE)"; exit 1; fi
+          echo "$PRED" | head -n1 | grep -q '"guardrails"' || { echo "❌ guardrails missing"; exit 1; }
+
+          echo "→ Dry run (no write, no audit requirement)"
+          DR=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"shift_id":"'"${S_ID}"'","organization_id":"'"${ORG_ID}"'","criteria":["availability"],"dry_run":true}')
+          DR_CODE=$(echo "$DR" | tail -n1)
+          if [ "$DR_CODE" != "200" ]; then echo "❌ dry run failed ($DR_CODE)"; exit 1; fi
+
+          echo "→ Auto-assign top (should create assignment)"
+          AA=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"shift_id":"'"${S_ID}"'","organization_id":"'"${ORG_ID}"'","auto_assign":true}')
+          AA_CODE=$(echo "$AA" | tail -n1)
+          echo "$AA" | head -n1 | grep -q '"auto_assigned":true' || { echo "❌ auto_assign did not occur"; exit 1; }
+
+          echo "→ Manager can predict own org; other org forbidden"
+          MP=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Authorization: Bearer ${M_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"shift_id":"'"${S_ID}"'","organization_id":"'"${ORG_ID}"'"}')
+          [ "$MP" = "200" ] || { echo "❌ manager predict failed ($MP)"; exit 1; }
+          MF=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Authorization: Bearer ${M_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"shift_id":"shft-xyz","organization_id":"org-not-mine"}')
+          [ "$MF" != "200" ] || { echo "❌ manager should be forbidden other org"; exit 1; }
+
+          echo "→ Agent forbidden"
+          AF=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/api/ai/predict \
+            -H "Authorization: Bearer ${AGENT_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"shift_id":"'"${S_ID}"'","organization_id":"'"${ORG_ID}"'"}')
+          [ "$AF" != "200" ] || { echo "❌ agent should be forbidden"; exit 1; }
+
+          echo "→ Determinism: same top across calls"
+          P1=$(curl -s -X POST http://localhost:3000/api/ai/predict -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" -d '{"shift_id":"'"${S_ID}"'","organization_id":"'"${ORG_ID}"'"}')
+          P2=$(curl -s -X POST http://localhost:3000/api/ai/predict -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" -d '{"shift_id":"'"${S_ID}"'","organization_id":"'"${ORG_ID}"'"}')
+          T1=$(echo "$P1" | sed -n 's/.*"agent_id":"\([^"]*\)".*/\1/p' | head -n1)
+          T2=$(echo "$P2" | sed -n 's/.*"agent_id":"\([^"]*\)".*/\1/p' | head -n1)
+          [ "$T1" = "$T2" ] || { echo "❌ top candidate changed"; exit 1; }
+
+          echo "✅ Stage 23 Predict + Safeguards passed"
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}

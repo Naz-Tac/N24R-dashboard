@@ -28,6 +28,7 @@ export default function AssignmentsAdminPage() {
   const [suggestModal, setSuggestModal] = useState(false);
   const [shiftId, setShiftId] = useState('');
   const [orgId, setOrgId] = useState('');
+  const [orgs, setOrgs] = useState<Array<{id:string; name:string}>>([]);
   const [recs, setRecs] = useState<Array<{agent_id:string; score:number; reason:string}>>([]);
   const [recsLoading, setRecsLoading] = useState(false);
 
@@ -54,6 +55,16 @@ export default function AssignmentsAdminPage() {
   useEffect(() => {
     fetchAssignments();
   }, [accessToken]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/organizations');
+        const json = await res.json();
+        if (res.ok) setOrgs(json?.data || []);
+      } catch {}
+    })();
+  }, []);
 
   const openNotify = (a: Assignment) => {
     setSelected(a);
@@ -89,7 +100,7 @@ export default function AssignmentsAdminPage() {
     setSuggestModal(true);
   };
 
-  const fetchSuggestions = async () => {
+  const fetchSuggestions = async (opts?: { dryRun?: boolean }) => {
     if (!shiftId || !orgId || !accessToken) {
       showNotification('Provide shift ID and organization ID', 'delete');
       return;
@@ -102,11 +113,12 @@ export default function AssignmentsAdminPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({ shift_id: shiftId, organization_id: orgId, criteria: ['availability','past_acceptance','credentials'] }),
+        body: JSON.stringify({ shift_id: shiftId, organization_id: orgId, criteria: ['availability','past_acceptance','credentials'], dry_run: opts?.dryRun }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Failed');
       setRecs(json?.data?.recommendations?.slice(0,5) || []);
+      if (opts?.dryRun) showNotification('Dry run completed', 'update');
     } catch (e:any) {
       showNotification(e?.message || 'Failed to get recommendations', 'delete');
     } finally {
@@ -224,14 +236,18 @@ export default function AssignmentsAdminPage() {
                 <input className="w-full border rounded p-2 bg-white dark:bg-gray-900" value={shiftId} onChange={(e)=>setShiftId(e.target.value)} placeholder="UUID" />
               </div>
               <div>
-                <label className="block text-sm mb-1">Organization ID</label>
-                <input className="w-full border rounded p-2 bg-white dark:bg-gray-900" value={orgId} onChange={(e)=>setOrgId(e.target.value)} placeholder="UUID" />
+                <label className="block text-sm mb-1">Organization</label>
+                <select className="w-full border rounded p-2 bg-white dark:bg-gray-900" value={orgId} onChange={(e)=>setOrgId(e.target.value)}>
+                  <option value="">Select organization</option>
+                  {orgs.map((o)=> (<option key={o.id} value={o.id}>{o.name}</option>))}
+                </select>
               </div>
             </div>
             <div className="flex justify-between items-center mb-3">
               <button className="px-3 py-1 rounded border" onClick={()=>setSuggestModal(false)}>Close</button>
               <div className="flex items-center gap-2">
-                <button className="px-3 py-1 rounded bg-blue-600 text-white" onClick={fetchSuggestions} disabled={recsLoading}>{recsLoading?'Loading…':'Smart Suggest'}</button>
+                <button className="px-3 py-1 rounded bg-blue-600 text-white" onClick={()=>fetchSuggestions()} disabled={recsLoading}>{recsLoading?'Loading…':'Smart Suggest'}</button>
+                <button className="px-3 py-1 rounded bg-amber-600 text-white" onClick={()=>fetchSuggestions({ dryRun: true })} disabled={recsLoading}>Dry Run</button>
                 <button className="px-3 py-1 rounded bg-emerald-600 text-white" onClick={autoAssignTop} disabled={!recs.length}>Auto-Assign Top</button>
               </div>
             </div>
@@ -245,16 +261,25 @@ export default function AssignmentsAdminPage() {
                       <th className="py-2">Agent</th>
                       <th>Score</th>
                       <th>Reason</th>
+                      <th>Guardrails</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {recs.map((r)=> (
-                      <tr key={r.agent_id} className="border-b border-gray-100 dark:border-gray-800">
-                        <td className="py-2">{r.agent_id.slice(0,8)}…</td>
-                        <td>{r.score.toFixed(2)}</td>
-                        <td>{r.reason}</td>
-                      </tr>
-                    ))}
+                    {recs.map((r:any)=> {
+                      const color = r.score >= 0.75 ? 'text-emerald-600' : r.score >= 0.5 ? 'text-amber-600' : 'text-rose-600';
+                      return (
+                        <tr key={r.agent_id} className="border-b border-gray-100 dark:border-gray-800">
+                          <td className="py-2">{r.agent_id.slice(0,8)}…</td>
+                          <td className={`font-medium ${color}`}>{r.score.toFixed(2)}</td>
+                          <td>{r.reason}</td>
+                          <td className="flex flex-wrap gap-1 py-2">
+                            {(r.badges || []).map((b:string)=> (
+                              <span key={b} className="px-2 py-0.5 text-xs rounded bg-gray-100 dark:bg-gray-700">{b}</span>
+                            ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}

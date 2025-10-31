@@ -175,7 +175,7 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: auth.message }, { status: auth.status });
     }
     const body = await req.json();
-    const { id, name, email, role, status } = body;
+  const { id, name, email, role, status, do_not_assign, home_base, credentials } = body;
 
     // Validate required fields
     if (!id) {
@@ -267,6 +267,22 @@ export async function PUT(req: NextRequest) {
         );
       }
       updates.status = status.trim().toLowerCase();
+    }
+
+    if (do_not_assign !== undefined) {
+      updates.do_not_assign = Boolean(do_not_assign);
+    }
+    if (home_base !== undefined) {
+      updates.home_base = String(home_base || '').trim() || null;
+    }
+    if (credentials !== undefined) {
+      // accept array or comma-separated string
+      let creds: any = credentials;
+      if (typeof creds === 'string') creds = creds.split(',').map((s) => s.trim()).filter(Boolean);
+      if (!Array.isArray(creds)) {
+        return NextResponse.json({ error: 'INVALID_FIELD', details: 'credentials must be array or comma-separated string' }, { status: 400 });
+      }
+      updates.credentials = creds;
     }
 
     if (Object.keys(updates).length === 0) {

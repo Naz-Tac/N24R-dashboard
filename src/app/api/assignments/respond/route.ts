@@ -63,12 +63,29 @@ export async function POST(req: NextRequest) {
     }
 
     const newStatus = action === 'accept' ? 'accepted' : 'declined';
-    const { data: updated, error: updErr } = await supabaseService
-      .from('assignments')
-      .update({ status: newStatus })
-      .eq('id', assignment_id)
-      .select('*')
-      .maybeSingle();
+    // Try to set responded_at; if column missing, fall back to status-only update
+    let updated: any = null;
+    let updErr: any = null;
+    try {
+      const resp = await supabaseService
+        .from('assignments')
+        .update({ status: newStatus, responded_at: new Date().toISOString() })
+        .eq('id', assignment_id)
+        .select('*')
+        .maybeSingle();
+      updated = resp.data; updErr = resp.error;
+      if (updErr && /column .*responded_at.* does not exist/i.test(updErr.message || '')) {
+        const resp2 = await supabaseService
+          .from('assignments')
+          .update({ status: newStatus })
+          .eq('id', assignment_id)
+          .select('*')
+          .maybeSingle();
+        updated = resp2.data; updErr = resp2.error;
+      }
+    } catch (e: any) {
+      updErr = e;
+    }
 
     if (updErr) {
       return NextResponse.json({ error: updErr.message, code: updErr.code }, { status: 400 });
