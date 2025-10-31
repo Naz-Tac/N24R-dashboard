@@ -1053,19 +1053,35 @@ jobs:
           if [ "$MEM_POST_CODE" != "201" ]; then echo "❌ Memory POST failed ($MEM_POST_CODE)"; echo "$MEM_POST_BODY"; exit 1; fi
           echo "$MEM_POST_BODY" | grep -q '"data"' || (echo "❌ Memory POST missing data"; exit 1)
 
-          echo "→ GET /api/ai/memory (should include entry)"
+          echo "→ GET /api/ai/memory (should include entry; expect source=db when Supabase is configured)"
           MEM_GET=$(curl -s -w "\n%{http_code}" -X GET "http://localhost:3000/api/ai/memory?limit=10" \
             -H "Authorization: Bearer ${ADMIN_TOKEN}")
           MEM_GET_CODE=$(echo "$MEM_GET" | tail -n1)
           MEM_GET_BODY=$(echo "$MEM_GET" | head -n-1)
           if [ "$MEM_GET_CODE" != "200" ]; then echo "❌ Memory GET failed ($MEM_GET_CODE)"; echo "$MEM_GET_BODY"; exit 1; fi
           echo "$MEM_GET_BODY" | grep -qi 'hello memory' || (echo "❌ Memory GET missing expected content"; exit 1)
+          # If service key is present, we expect source=db; otherwise source may be local
+          if [ -n "${SUPABASE_SERVICE_ROLE_KEY}" ]; then
+            echo "$MEM_GET_BODY" | grep -q '"source":"db"' || echo "⚠️  Source is not db; may be running with fallback"
+          fi
 
           echo "→ DELETE /api/ai/memory (clear)"
           MEM_DEL=$(curl -s -w "\n%{http_code}" -X DELETE http://localhost:3000/api/ai/memory \
             -H "Authorization: Bearer ${ADMIN_TOKEN}")
           MEM_DEL_CODE=$(echo "$MEM_DEL" | tail -n1)
           if [ "$MEM_DEL_CODE" != "200" ]; then echo "❌ Memory DELETE failed ($MEM_DEL_CODE)"; echo "$MEM_DEL"; exit 1; fi
+
+          echo "→ Force fallback mode to validate local store still works"
+          FB_POST=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/ai/memory \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{"type":"user_message","content":"fallback entry","force_fallback":true}')
+          FB_POST_CODE=$(echo "$FB_POST" | tail -n1)
+          FB_POST_BODY=$(echo "$FB_POST" | head -n-1)
+          if [ "$FB_POST_CODE" != "201" ]; then echo "❌ Fallback Memory POST failed ($FB_POST_CODE)"; echo "$FB_POST_BODY"; exit 1; fi
+          echo "$FB_POST_BODY" | grep -q '"source":"local"' || echo "⚠️  Fallback POST did not indicate local source"
+          FB_GET=$(curl -s -X GET "http://localhost:3000/api/ai/memory?limit=10&fallback=1" -H "Authorization: Bearer ${ADMIN_TOKEN}")
+          echo "$FB_GET" | grep -qi 'fallback entry' || (echo "❌ Fallback GET missing local entry"; exit 1)
 
           echo "→ Verify context persistence and follow-up suggestion"
           C1=$(curl -s -X POST http://localhost:3000/api/ai/assistant \

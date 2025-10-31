@@ -40,16 +40,17 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const limit = Math.min(parseInt(searchParams.get('limit') || '10', 10) || 10, 50);
     const user_id = searchParams.get('user_id') || auth.userId!;
+    const forceFallback = searchParams.get('fallback') === '1';
 
     if (user_id !== auth.userId && !canViewOthers(auth.role!)) {
       return NextResponse.json({ error: 'Forbidden: cannot view other users\' memory' }, { status: 403 });
     }
 
     // Opportunistic purge of old records (>30 days)
-    AiMemoryStore.purgeOlderThan(30);
+    await AiMemoryStore.purgeOlderThan(30);
 
-    const rows = AiMemoryStore.listByUser(user_id, limit);
-    return NextResponse.json({ success: true, data: rows }, { status: 200 });
+    const { source, rows } = await AiMemoryStore.getRecent(user_id, limit, { forceFallback });
+    return NextResponse.json({ success: true, data: rows, source }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ error: 'Failed to fetch memory', details: e?.message }, { status: 500 });
   }
@@ -71,12 +72,10 @@ export async function POST(req: NextRequest) {
       action: body.action || null,
       action_details: body.action_details || null,
     };
-    const row = AiMemoryStore.add(entry);
+    const { source, row } = await AiMemoryStore.append(entry, { forceFallback: !!body?.force_fallback });
     // Opportunistic purge
-    AiMemoryStore.purgeOlderThan(30);
-    // Try persist to DB
-    persistToSupabase(entry);
-    return NextResponse.json({ success: true, data: row }, { status: 201 });
+    await AiMemoryStore.purgeOlderThan(30);
+    return NextResponse.json({ success: true, data: row, source }, { status: 201 });
   } catch (e: any) {
     return NextResponse.json({ error: 'Failed to write memory', details: e?.message }, { status: 500 });
   }
@@ -87,8 +86,9 @@ export async function DELETE(req: NextRequest) {
   if (!auth.ok) return NextResponse.json({ error: auth.message }, { status: auth.status });
 
   try {
-    const { searchParams } = new URL(req.url);
-    const targetUserId = searchParams.get('user_id') || auth.userId!;
+  const { searchParams } = new URL(req.url);
+  const targetUserId = searchParams.get('user_id') || auth.userId!;
+  const forceFallback = searchParams.get('fallback') === '1';
 
     if (targetUserId !== auth.userId) {
       // Only admin can clear others' memory
@@ -97,8 +97,8 @@ export async function DELETE(req: NextRequest) {
       }
     }
 
-    const deleted = AiMemoryStore.clearUser(targetUserId);
-    return NextResponse.json({ success: true, deleted }, { status: 200 });
+    const { source, deleted } = await AiMemoryStore.clearUser(targetUserId, { forceFallback });
+    return NextResponse.json({ success: true, deleted, source }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ error: 'Failed to clear memory', details: e?.message }, { status: 500 });
   }

@@ -410,8 +410,8 @@ export async function POST(req: NextRequest) {
   // Use role from body if provided, otherwise use authenticated role
   const role = (body.role || auth.role) as AssistantRole;
 
-  // Load recent memory (last 10 entries)
-  const recentMemory = AiMemoryStore.listByUser(auth.userId!, 10);
+  // Load recent memory (last 10 entries) using DB when available
+  const { rows: recentMemory } = await AiMemoryStore.getRecent(auth.userId!, 10);
 
     // Detect intent from query
     const intent = detectIntent(query);
@@ -420,7 +420,7 @@ export async function POST(req: NextRequest) {
     if (intent.type !== 'none' && intent.confidence > 0.7) {
       const actionResult = await executeAction(intent, role, req);
       // Append memory entries (user message + assistant action summary)
-      AiMemoryStore.add({
+      await AiMemoryStore.append({
         user_id: auth.userId!,
         role,
         timestamp: new Date().toISOString(),
@@ -430,7 +430,7 @@ export async function POST(req: NextRequest) {
         action: null,
         action_details: null,
       });
-      AiMemoryStore.add({
+      await AiMemoryStore.append({
         user_id: auth.userId!,
         role,
         timestamp: new Date().toISOString(),
@@ -441,7 +441,7 @@ export async function POST(req: NextRequest) {
         action_details: actionResult.details,
       });
       // Purge old
-      AiMemoryStore.purgeOlderThan(30);
+      await AiMemoryStore.purgeOlderThan(30);
       
       return NextResponse.json({
         success: actionResult.success,
@@ -464,7 +464,7 @@ export async function POST(req: NextRequest) {
     if (useMock) {
       const response = generateMockResponse(query, role);
       // Memory entries for conversational guidance
-      AiMemoryStore.add({
+      await AiMemoryStore.append({
         user_id: auth.userId!,
         role,
         timestamp: new Date().toISOString(),
@@ -474,7 +474,7 @@ export async function POST(req: NextRequest) {
         action: null,
         action_details: null,
       });
-      AiMemoryStore.add({
+      await AiMemoryStore.append({
         user_id: auth.userId!,
         role,
         timestamp: new Date().toISOString(),
@@ -484,7 +484,7 @@ export async function POST(req: NextRequest) {
         action: null,
         action_details: null,
       });
-      AiMemoryStore.purgeOlderThan(30);
+      await AiMemoryStore.purgeOlderThan(30);
       
       return NextResponse.json({
         success: true,
