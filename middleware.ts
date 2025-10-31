@@ -50,7 +50,8 @@ function checkAccess(path: string, role: string | undefined) {
     path.startsWith('/shifts') ||
     path.startsWith('/assignments') ||
     path.startsWith('/settings') ||
-    path.startsWith('/analytics')
+    path.startsWith('/analytics') ||
+    path.startsWith('/manager')
   ) {
     // Predictive Analytics: admin and manager only
     if (path.startsWith('/analytics/predictive')) {
@@ -62,6 +63,10 @@ function checkAccess(path: string, role: string | undefined) {
     }
     // General analytics: admin, manager, dispatcher
     if (path.startsWith('/analytics')) {
+      return role === 'admin' || role === 'manager' || role === 'dispatcher';
+    }
+    // Manager console: admin, manager, dispatcher
+    if (path.startsWith('/manager')) {
       return role === 'admin' || role === 'manager' || role === 'dispatcher';
     }
     return role === 'admin' || role === 'dispatcher';
@@ -184,6 +189,7 @@ export const config = {
     '/availability',
     '/agent/:path*',
     '/analytics/:path*',
+    '/manager/:path*',
      '/org/:path*',
     '/api/:path*',
   ],

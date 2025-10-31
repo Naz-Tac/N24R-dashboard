@@ -82,6 +82,20 @@ export default function AgentMobilePage() {
     try { return new Date(iso).toLocaleString(); } catch { return iso; }
   }
 
+  async function quickReply(noteId: string) {
+    try {
+      const t = await ensureToken();
+      await fetch('/api/agent/chat/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+        body: JSON.stringify({ message: 'On it! 👍' }),
+      });
+      await load();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-md p-4 space-y-4">
       <div className="sticky top-0 z-10 -mx-4 px-4 py-3 bg-white/80 dark:bg-boxdark/80 backdrop-blur border-b border-stroke dark:border-strokedark">
@@ -146,12 +160,15 @@ export default function AgentMobilePage() {
           )}
           {(data.notifications || []).map((n: any) => (
             <div key={n.id} className="rounded-lg border border-stroke dark:border-strokedark p-3 bg-white dark:bg-boxdark">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-sm font-medium text-black dark:text-white">{n.type}</div>
                   <div className="text-xs text-slate-500">{n.message}</div>
                   <div className="text-[10px] text-slate-400 mt-1">{formatTime(n.created_at)} · via {n.channel}</div>
                 </div>
+                {n.type === 'chat' && (
+                  <button onClick={() => quickReply(n.id)} className="shrink-0 rounded bg-blue-600 px-2 py-1 text-xs text-white">Reply</button>
+                )}
               </div>
             </div>
           ))}
