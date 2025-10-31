@@ -1361,6 +1361,102 @@ jobs:
           [ "$T1" = "$T2" ] || { echo "❌ top candidate changed"; exit 1; }
 
           echo "✅ Stage 23 Predict + Safeguards passed"
+
+      - name: Stage 24 – Predictive Analytics + Auto-Fill
+        env:
+          ADMIN_TOKEN: ${{ env.ADMIN_TOKEN }}
+          M_TOKEN: ${{ env.M_TOKEN }}
+          AGENT_TOKEN: ${{ env.AGENT_TOKEN }}
+          ORG_ID: ${{ env.ORG_ID }}
+          AI_ANALYTICS_MOCK: "1"
+          AI_AUTOFILL_ENABLED: "1"
+        run: |
+          echo "📊 Stage 24: Predictive Analytics + Auto-Fill Workflow"
+
+          # Test analytics summary endpoint (admin)
+          echo "Testing GET /api/analytics/predictive/summary..."
+          SUMMARY=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/summary?organization_id=$ORG_ID")
+          STATUS=$(echo "$SUMMARY" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$STATUS" = "200" ] || { echo "❌ summary returned $STATUS"; exit 1; }
+          BODY=$(echo "$SUMMARY" | sed '/HTTP_STATUS:/d')
+          echo "$BODY" | jq . || { echo "❌ summary not JSON"; exit 1; }
+          echo "$BODY" | jq -e '.data.total_predictions' > /dev/null || { echo "❌ missing total_predictions"; exit 1; }
+          echo "$BODY" | jq -e '.data.avg_prediction_score' > /dev/null || { echo "❌ missing avg_prediction_score"; exit 1; }
+          echo "$BODY" | jq -e '.data.guardrail_skip_rate' > /dev/null || { echo "❌ missing guardrail_skip_rate"; exit 1; }
+          echo "✓ summary endpoint OK"
+
+          # Test timeseries endpoint
+          echo "Testing GET /api/analytics/predictive/timeseries..."
+          TS=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/timeseries?organization_id=$ORG_ID")
+          STATUS=$(echo "$TS" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$STATUS" = "200" ] || { echo "❌ timeseries returned $STATUS"; exit 1; }
+          BODY=$(echo "$TS" | sed '/HTTP_STATUS:/d')
+          echo "$BODY" | jq -e '.data.dates' > /dev/null || { echo "❌ missing dates"; exit 1; }
+          echo "$BODY" | jq -e '.data.predictions' > /dev/null || { echo "❌ missing predictions"; exit 1; }
+          echo "$BODY" | jq -e '.data.auto_assignments' > /dev/null || { echo "❌ missing auto_assignments"; exit 1; }
+          echo "✓ timeseries endpoint OK"
+
+          # Test guardrails endpoint
+          echo "Testing GET /api/analytics/predictive/guardrails..."
+          GR=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/guardrails?organization_id=$ORG_ID")
+          STATUS=$(echo "$GR" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$STATUS" = "200" ] || { echo "❌ guardrails returned $STATUS"; exit 1; }
+          BODY=$(echo "$GR" | sed '/HTTP_STATUS:/d')
+          echo "$BODY" | jq -e '.data[0].reason' > /dev/null || { echo "❌ missing reason"; exit 1; }
+          echo "$BODY" | jq -e '.data[0].count' > /dev/null || { echo "❌ missing count"; exit 1; }
+          echo "✓ guardrails endpoint OK"
+
+          # Test manager RBAC for analytics (should succeed)
+          echo "Testing manager access to analytics..."
+          M_SUMMARY=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $M_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/summary?organization_id=$ORG_ID")
+          M_STATUS=$(echo "$M_SUMMARY" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$M_STATUS" = "200" ] || { echo "❌ manager analytics returned $M_STATUS"; exit 1; }
+          echo "✓ manager can access analytics"
+
+          # Test agent RBAC (should fail)
+          echo "Testing agent forbidden from analytics..."
+          A_SUMMARY=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $AGENT_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/summary?organization_id=$ORG_ID")
+          A_STATUS=$(echo "$A_SUMMARY" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$A_STATUS" = "403" ] || { echo "❌ agent should be forbidden, got $A_STATUS"; exit 1; }
+          echo "✓ agent correctly forbidden"
+
+          # Test auto-fill endpoint
+          echo "Testing POST /api/ai/autofill..."
+          AF=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"organization_id\":\"$ORG_ID\",\"limit\":3}" \
+            "http://localhost:3000/api/ai/autofill")
+          AF_STATUS=$(echo "$AF" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$AF_STATUS" = "200" ] || { echo "❌ autofill returned $AF_STATUS"; exit 1; }
+          AF_BODY=$(echo "$AF" | sed '/HTTP_STATUS:/d')
+          echo "$AF_BODY" | jq -e '.filled' > /dev/null || { echo "❌ missing filled"; exit 1; }
+          echo "$AF_BODY" | jq -e '.skipped' > /dev/null || { echo "❌ missing skipped"; exit 1; }
+          echo "✓ autofill endpoint OK"
+
+          # Test deterministic mock output
+          echo "Testing deterministic mock output..."
+          S1=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/summary?organization_id=$ORG_ID" | jq -S .)
+          S2=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/summary?organization_id=$ORG_ID" | jq -S .)
+          [ "$S1" = "$S2" ] || { echo "❌ summary not deterministic"; exit 1; }
+          echo "✓ mock data is deterministic"
+
+          # Test predictive analytics page render
+          echo "Testing GET /analytics/predictive page..."
+          PAGE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -b ".next/cookies.txt" \
+            "http://localhost:3000/analytics/predictive")
+          PAGE_STATUS=$(echo "$PAGE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$PAGE_STATUS" = "200" ] || { echo "❌ page returned $PAGE_STATUS"; exit 1; }
+          echo "✓ page renders successfully"
+
+          echo "✅ Stage 24 Predictive Analytics + Auto-Fill passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}

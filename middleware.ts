@@ -51,6 +51,10 @@ function checkAccess(path: string, role: string | undefined) {
     path.startsWith('/settings') ||
     path.startsWith('/analytics')
   ) {
+    // Predictive Analytics: admin and manager only
+    if (path.startsWith('/analytics/predictive')) {
+      return role === 'admin' || role === 'manager';
+    }
     // AI Analytics: admin and manager only
     if (path.startsWith('/analytics/ai')) {
       return role === 'admin' || role === 'manager';
@@ -71,12 +75,20 @@ function checkAccess(path: string, role: string | undefined) {
     }
   // AI assistant API: all authenticated roles
   if (path.startsWith('/api/ai/')) {
+    // Auto-fill endpoint: admin/manager/dispatcher only
+    if (path.startsWith('/api/ai/autofill')) {
+      return role === 'admin' || role === 'dispatcher' || role === 'manager';
+    }
     // Predict endpoint: admin/manager/dispatcher only
     if (path.startsWith('/api/ai/predict')) {
       return role === 'admin' || role === 'dispatcher' || role === 'manager';
     }
     // Other AI endpoints: all authenticated roles
     return role === 'admin' || role === 'dispatcher' || role === 'manager' || role === 'agent';
+  }
+  // Predictive analytics API: admin and manager only
+  if (path.startsWith('/api/analytics/predictive')) {
+    return role === 'admin' || role === 'manager';
   }
   // API routes are handled primarily by route-level RBAC; allow here
   if (path.startsWith('/api/')) return true;
