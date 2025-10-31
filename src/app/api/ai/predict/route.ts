@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/rbac';
 import { supabaseService } from '@/lib/supabaseClient';
 import { OrgStore } from '@/lib/inMemoryStore';
+import { getCurrentWeights, autotuneWeights, type Weights } from '@/lib/autotuneWeights';
 
 // Deterministic pseudo-random from string
 function hashSeed(s: string) {
@@ -33,12 +34,16 @@ function getEnvNumber(name: string, def: number) {
   return Number.isFinite(n) ? n : def;
 }
 
-function weightedScore(cs: {acceptance:number;response:number;availability:number;credentials:number; distance?: number}) {
-  const WA = getEnvNumber('AI_WEIGHT_ACCEPT', 0.4);
-  const WS = getEnvNumber('AI_WEIGHT_SPEED', 0.3);
-  const WV = getEnvNumber('AI_WEIGHT_AVAIL', 0.2);
-  const WC = getEnvNumber('AI_WEIGHT_CRED', 0.1);
-  const WD = getEnvNumber('AI_DISTANCE_WEIGHT', 0);
+function weightedScore(
+  cs: {acceptance:number;response:number;availability:number;credentials:number; distance?: number},
+  weights?: Weights
+) {
+  // Use provided weights or fall back to env defaults
+  const WA = weights?.accept ?? getEnvNumber('AI_WEIGHT_ACCEPT', 0.4);
+  const WS = weights?.speed ?? getEnvNumber('AI_WEIGHT_SPEED', 0.3);
+  const WV = weights?.avail ?? getEnvNumber('AI_WEIGHT_AVAIL', 0.2);
+  const WC = weights?.cred ?? getEnvNumber('AI_WEIGHT_CRED', 0.1);
+  const WD = weights?.distance ?? getEnvNumber('AI_DISTANCE_WEIGHT', 0);
   return cs.acceptance * WA + cs.response * WS + cs.availability * WV + cs.credentials * WC + (cs.distance || 0) * WD;
 }
 
@@ -175,6 +180,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Lazy autotune: update weights before prediction
+    let currentWeights: Weights | undefined;
+    const autotuneEnabled = process.env.AI_AUTOTUNE_ENABLED === '1';
+    if (autotuneEnabled) {
+      const tuneResult = await autotuneWeights();
+      if (tuneResult.success) {
+        currentWeights = tuneResult.newWeights;
+      } else {
+        currentWeights = await getCurrentWeights();
+      }
+    }
+
     const mock = process.env.AI_PREDICT_MOCK === '1' || process.env.NODE_ENV !== 'production';
 
     const agentIds = await fetchAgentsByOrg(organization_id);
@@ -234,7 +251,7 @@ export async function POST(req: NextRequest) {
         distance: distanceScore,
       };
 
-      const score = weightedScore(cs);
+      const score = weightedScore(cs, currentWeights);
       return {
         agent_id,
         score: Number(score.toFixed(4)),

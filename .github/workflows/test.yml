@@ -1457,6 +1457,90 @@ jobs:
 
           echo "✅ Stage 24 Predictive Analytics + Auto-Fill passed"
 
+      - name: Stage 25 – AI Performance Optimization & Auto-Tuning
+        env:
+          ADMIN_TOKEN: ${{ env.ADMIN_TOKEN }}
+          M_TOKEN: ${{ env.M_TOKEN }}
+          AGENT_TOKEN: ${{ env.AGENT_TOKEN }}
+          ORG_ID: ${{ env.ORG_ID }}
+          AI_ANALYTICS_MOCK: "1"
+          AI_AUTOTUNE_ENABLED: "1"
+        run: |
+          echo "🎯 Stage 25: AI Performance Optimization & Auto-Tuning"
+
+          # Create a test assignment for feedback
+          echo "Creating test assignment for feedback..."
+          ASSIGN=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"shift_id\":\"test-shift-1\",\"agent_id\":\"test-agent-1\",\"organization_id\":\"$ORG_ID\"}" \
+            "http://localhost:3000/api/assignments")
+          ASSIGN_STATUS=$(echo "$ASSIGN" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$ASSIGN_STATUS" = "201" ] || { echo "❌ assignment creation failed with $ASSIGN_STATUS"; exit 1; }
+          ASSIGN_BODY=$(echo "$ASSIGN" | sed '/HTTP_STATUS:/d')
+          ASSIGN_ID=$(echo "$ASSIGN_BODY" | jq -r '.data.id // empty')
+          [ -n "$ASSIGN_ID" ] || { echo "❌ no assignment ID returned"; exit 1; }
+          echo "✓ created assignment: $ASSIGN_ID"
+
+          # Test feedback endpoint (admin)
+          echo "Testing POST /api/ai/feedback..."
+          FB=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"assignment_id\":\"$ASSIGN_ID\",\"result\":\"success\",\"responded_in\":120}" \
+            "http://localhost:3000/api/ai/feedback")
+          FB_STATUS=$(echo "$FB" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$FB_STATUS" = "200" ] || { echo "❌ feedback returned $FB_STATUS"; exit 1; }
+          FB_BODY=$(echo "$FB" | sed '/HTTP_STATUS:/d')
+          echo "$FB_BODY" | jq -e '.success' > /dev/null || { echo "❌ feedback not successful"; exit 1; }
+          echo "✓ feedback endpoint OK"
+
+          # Test performance analytics endpoint (admin)
+          echo "Testing GET /api/analytics/predictive/performance..."
+          PERF=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/performance")
+          PERF_STATUS=$(echo "$PERF" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$PERF_STATUS" = "200" ] || { echo "❌ performance returned $PERF_STATUS"; exit 1; }
+          PERF_BODY=$(echo "$PERF" | sed '/HTTP_STATUS:/d')
+          echo "$PERF_BODY" | jq -e '.data.current_weights' > /dev/null || { echo "❌ missing current_weights"; exit 1; }
+          echo "$PERF_BODY" | jq -e '.data.acceptance_rate_7d' > /dev/null || { echo "❌ missing acceptance_rate_7d"; exit 1; }
+          echo "$PERF_BODY" | jq -e '.data.acceptance_trend' > /dev/null || { echo "❌ missing acceptance_trend"; exit 1; }
+          echo "$PERF_BODY" | jq -e '.data.recalibration_events' > /dev/null || { echo "❌ missing recalibration_events"; exit 1; }
+          echo "✓ performance endpoint OK"
+
+          # Test manager RBAC for performance (should succeed)
+          echo "Testing manager access to performance..."
+          M_PERF=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $M_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/performance")
+          M_PERF_STATUS=$(echo "$M_PERF" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$M_PERF_STATUS" = "200" ] || { echo "❌ manager performance returned $M_PERF_STATUS"; exit 1; }
+          echo "✓ manager can access performance"
+
+          # Test agent RBAC (should fail)
+          echo "Testing agent forbidden from performance..."
+          A_PERF=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $AGENT_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/performance")
+          A_PERF_STATUS=$(echo "$A_PERF" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$A_PERF_STATUS" = "403" ] || { echo "❌ agent should be forbidden, got $A_PERF_STATUS"; exit 1; }
+          echo "✓ agent correctly forbidden"
+
+          # Test deterministic mock output
+          echo "Testing deterministic mock output..."
+          P1=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/performance" | jq -S '.data.current_weights')
+          P2=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:3000/api/analytics/predictive/performance" | jq -S '.data.current_weights')
+          [ "$P1" = "$P2" ] || { echo "❌ performance not deterministic"; exit 1; }
+          echo "✓ mock data is deterministic"
+
+          # Test performance page render
+          echo "Testing GET /analytics/predictive/performance page..."
+          PAGE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -b ".next/cookies.txt" \
+            "http://localhost:3000/analytics/predictive/performance")
+          PAGE_STATUS=$(echo "$PAGE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$PAGE_STATUS" = "200" ] || { echo "❌ page returned $PAGE_STATUS"; exit 1; }
+          echo "✓ page renders successfully"
+
+          echo "✅ Stage 25 AI Performance Optimization & Auto-Tuning passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}

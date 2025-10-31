@@ -75,6 +75,10 @@ function checkAccess(path: string, role: string | undefined) {
     }
   // AI assistant API: all authenticated roles
   if (path.startsWith('/api/ai/')) {
+    // Feedback endpoint: admin/manager/dispatcher only
+    if (path.startsWith('/api/ai/feedback')) {
+      return role === 'admin' || role === 'dispatcher' || role === 'manager';
+    }
     // Auto-fill endpoint: admin/manager/dispatcher only
     if (path.startsWith('/api/ai/autofill')) {
       return role === 'admin' || role === 'dispatcher' || role === 'manager';
