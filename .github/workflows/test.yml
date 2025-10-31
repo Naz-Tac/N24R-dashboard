@@ -1555,3 +1555,146 @@ jobs:
         run: |
           echo "---- .next.log (tail) ----"
           [ -f .next.log ] && tail -n 200 .next.log || echo "No .next.log found"
+
+      - name: Stage 26 – Agent Mobile & Notifications
+        env:
+          ADMIN_TOKEN: ${{ env.ADMIN_TOKEN }}
+          M_TOKEN: ${{ env.M_TOKEN }}
+          AGENT_TOKEN: ${{ env.AGENT_TOKEN }}
+          ORG_ID: ${{ env.ORG_ID }}
+          NOTIFY_MOCK: "1"
+          WHATSAPP_MOCK: "1"
+          SMS_MOCK: "1"
+          PUSH_MOCK: "1"
+          AI_PREDICT_MOCK: "1"
+          AGENT_TOKEN_TTL_SECONDS: "2"
+        run: |
+          echo "📱 Stage 26: Agent Mobile & Notifications"
+
+          # Get agent API token
+          echo "Issuing agent token..."
+          TOK=$(curl -s -X POST -H "Authorization: Bearer $AGENT_TOKEN" http://localhost:3000/api/auth/token)
+          echo "$TOK" | jq -e '.token' >/dev/null || { echo "❌ failed to issue agent token"; exit 1; }
+          AT=$(echo "$TOK" | jq -r '.token')
+          echo "✓ token issued"
+
+          # Use token to fetch agent assignments API
+          echo "Fetching agent assignments via token..."
+          AA=$(curl -s -H "Authorization: Bearer $AT" http://localhost:3000/api/agent/assignments)
+          echo "$AA" | jq -e '.data' >/dev/null || { echo "❌ agent assignments failed"; exit 1; }
+          echo "✓ agent assignments accessible"
+
+          # Test /agent/mobile page returns 200
+          echo "Testing /agent/mobile page..."
+          MOB=$(curl -s -w "\nHTTP_STATUS:%{http_code}" http://localhost:3000/agent/mobile)
+          MOB_STATUS=$(echo "$MOB" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$MOB_STATUS" = "200" ] || { echo "❌ /agent/mobile returned $MOB_STATUS"; exit 1; }
+          echo "✓ mobile page OK"
+
+          # Test push notifications mock for three channels
+          echo "Testing push notifications (whatsapp|sms|push)..."
+          for ch in whatsapp sms push; do
+            R=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+              -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+              -d "{\"to\":\"$AGENT_TOKEN\",\"channel\":\"$ch\",\"message\":\"Test $ch\",\"type\":\"test\"}" \
+              http://localhost:3000/api/notifications/push)
+            RS=$(echo "$R" | grep "HTTP_STATUS:" | cut -d: -f2)
+            [ "$RS" = "200" ] || { echo "❌ push $ch returned $RS"; exit 1; }
+          done
+          echo "✓ push mocks OK"
+
+          # Verify notifications recorded
+          echo "Verifying agent notifications recorded..."
+          NOTES=$(curl -s -H "Authorization: Bearer $AT" http://localhost:3000/api/agent/assignments | jq '.data.notifications | length')
+          [ "$NOTES" -ge 1 ] || { echo "❌ no notifications found"; exit 1; }
+          echo "✓ notifications present"
+
+          # RBAC: agent cannot send push
+          echo "Testing RBAC (agent cannot send)..."
+          R=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $AGENT_TOKEN" -H "Content-Type: application/json" \
+            -d '{"to":"foo","channel":"push","message":"x"}' \
+            http://localhost:3000/api/notifications/push)
+          RS=$(echo "$R" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$RS" = "403" ] || { echo "❌ agent should be forbidden, got $RS"; exit 1; }
+          echo "✓ RBAC enforced"
+
+          # Token expiry test (TTL=2s)
+          echo "Testing token expiry..."
+          sleep 3
+          EXP=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $AT" http://localhost:3000/api/agent/assignments)
+          EXP_STATUS=$(echo "$EXP" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$EXP_STATUS" = "401" ] || { echo "❌ token should be expired, got $EXP_STATUS"; exit 1; }
+          echo "✓ token expiry works"
+
+          echo "✅ Stage 26 Agent Mobile & Notifications passed"
+      
+      - name: Stage 26 – Agent Mobile & Notifications
+        env:
+          NOTIFY_MOCK: "1"
+          WHATSAPP_MOCK: "1"
+          SMS_MOCK: "1"
+          PUSH_MOCK: "1"
+          AGENT_TOKEN_TTL_SECONDS: "5"
+          ADMIN_TOKEN: ${{ env.ADMIN_TOKEN }}
+          M_TOKEN: ${{ env.M_TOKEN }}
+          AGENT_TOKEN: ${{ env.AGENT_TOKEN }}
+          ORG_ID: ${{ env.ORG_ID }}
+        run: |
+          echo "📱 Stage 26: Agent Mobile & Notifications"
+
+          # Render mobile page (requires agent session)
+          echo "Testing GET /agent/mobile page..."
+          PAGE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -b ".next/cookies.txt" "http://localhost:3000/agent/mobile")
+          PAGE_STATUS=$(echo "$PAGE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$PAGE_STATUS" = "200" ] || { echo "❌ mobile page returned $PAGE_STATUS"; exit 1; }
+          echo "✓ mobile page renders"
+
+          # Token issuance (agent)
+          echo "Issuing agent token..."
+          TOK=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST -H "Authorization: Bearer $AGENT_TOKEN" "http://localhost:3000/api/auth/token")
+          TOK_STATUS=$(echo "$TOK" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$TOK_STATUS" = "200" ] || { echo "❌ token returned $TOK_STATUS"; exit 1; }
+          TOK_BODY=$(echo "$TOK" | sed '/HTTP_STATUS:/d')
+          ATK=$(echo "$TOK_BODY" | jq -r '.token')
+          [ -n "$ATK" ] || { echo "❌ no token returned"; exit 1; }
+          echo "✓ token issued"
+
+          # Agent assignments with token
+          echo "Fetching agent assignments with token..."
+          AA=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ATK" "http://localhost:3000/api/agent/assignments")
+          AA_STATUS=$(echo "$AA" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$AA_STATUS" = "200" ] || { echo "❌ agent assignments returned $AA_STATUS"; exit 1; }
+          echo "✓ agent assignments OK"
+
+          # Push notifications API (admin)
+          echo "Testing POST /api/notifications/push across channels..."
+          for CH in whatsapp sms push; do
+            R=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+              -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+              -d "{\"to\":\"test-agent-1\",\"channel\":\"$CH\",\"message\":\"Hello $CH\",\"type\":\"test\"}" \
+              "http://localhost:3000/api/notifications/push")
+            RS=$(echo "$R" | grep "HTTP_STATUS:" | cut -d: -f2)
+            [ "$RS" = "200" ] || { echo "❌ push $CH returned $RS"; exit 1; }
+          done
+          echo "✓ push API OK for all channels"
+
+          # RBAC: agent forbidden to send push
+          echo "Testing RBAC for push (agent forbidden)..."
+          R=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $AGENT_TOKEN" -H "Content-Type: application/json" \
+            -d '{"to":"test-agent-1","channel":"sms","message":"nope"}' \
+            "http://localhost:3000/api/notifications/push")
+          RS=$(echo "$R" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$RS" = "403" ] || { echo "❌ agent should be forbidden, got $RS"; exit 1; }
+          echo "✓ RBAC enforced"
+
+          # Token expiration (TTL=5s)
+          echo "Testing token expiration (TTL=5s)..."
+          sleep 6
+          EX=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ATK" "http://localhost:3000/api/agent/assignments")
+          EXS=$(echo "$EX" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$EXS" = "401" ] || { echo "❌ expired token should be 401, got $EXS"; exit 1; }
+          echo "✓ token expiration works"
+
+          echo "✅ Stage 26 Agent Mobile & Notifications passed"

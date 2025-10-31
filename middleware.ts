@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 // @ts-ignore -- type declarations may be missing at lint time in CI
 import { createServerClient } from '@supabase/ssr';
 import { supabaseService } from '@/lib/supabaseClient';
+import { verifyAgentToken } from '@/lib/agentToken';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
@@ -119,9 +120,27 @@ export async function middleware(req: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user = null as any;
+  // Accept either Supabase session or agent token for agent endpoints
+  const authHeader = req.headers.get('authorization') || req.headers.get('Authorization') || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : '';
+  const isAgentArea = pathname.startsWith('/agent') || pathname.startsWith('/api/agent/');
+
+  if (isAgentArea && bearer) {
+    const v = verifyAgentToken(bearer);
+    if (v.ok && v.sub) {
+      // Synthetic user object for role checks
+      user = { id: v.sub };
+    }
+  }
+
+  // Track role; default undefined until resolved
+  let assumedRole: string | undefined = undefined;
+
+  if (!user) {
+    const r = await supabase.auth.getUser();
+    user = r?.data?.user || null;
+  }
 
   if (!user) {
     if (isApiPath(pathname)) {
@@ -133,7 +152,13 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  const role = await getUserRole(user.id);
+  // If we verified an agent token for agent area, assume agent role
+  if (isAgentArea && bearer) {
+    const v2 = verifyAgentToken(bearer);
+    if (v2.ok) assumedRole = 'agent';
+  }
+
+  const role = assumedRole || (await getUserRole(user.id));
   const allowed = checkAccess(pathname, role || undefined);
   if (!allowed) {
     if (isApiPath(pathname)) {

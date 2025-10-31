@@ -106,6 +106,21 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('✅ Inserted assignment:', data);
+    // Fire-and-forget: log a notification for the agent (mock-friendly)
+    try {
+      const created = Array.isArray(data) ? data[0] : data;
+      if (created && created.agent_id) {
+        await supabaseService.from('agent_notifications').insert({
+          agent_id: created.agent_id,
+          type: 'shift_assigned',
+          message: `You have a new shift (${created.shift_id})`,
+          channel: 'push',
+          delivered_at: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.warn('Notification insert failed (non-blocking)', e);
+    }
     return NextResponse.json({ success: true, data }, { status: 201 });
   } catch (err) {
     console.error("POST error:", err);
