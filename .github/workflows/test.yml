@@ -1698,3 +1698,135 @@ jobs:
           echo "✓ token expiration works"
 
           echo "✅ Stage 26 Agent Mobile & Notifications passed"
+
+      - name: Stage 27 – Manager Command Center & Auto-Assign
+        env:
+          AI_PREDICT_MOCK: "1"
+          AI_ANALYTICS_MOCK: "1"
+          AGENT_LOCATION_MOCK: "1"
+          ASSIGN_MOCK: "1"
+          CHAT_MOCK: "1"
+          NOTIFY_MOCK: "1"
+          ADMIN_TOKEN: ${{ env.ADMIN_TOKEN }}
+          AGENT_TOKEN: ${{ env.AGENT_TOKEN }}
+        run: |
+          echo "🎛️ Stage 27: Manager Command Center & Auto-Assign"
+
+          # Render console page (admin)
+          echo "Testing GET /manager/console page..."
+          CONSOLE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" "http://localhost:3000/manager/console")
+          CONSOLE_STATUS=$(echo "$CONSOLE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          CONSOLE_BODY=$(echo "$CONSOLE" | sed '/HTTP_STATUS:/d')
+          [ "$CONSOLE_STATUS" = "200" ] || { echo "❌ console page returned $CONSOLE_STATUS"; exit 1; }
+          # Verify page includes expected elements
+          echo "$CONSOLE_BODY" | grep -q "Manager Command Center" || { echo "❌ console page missing title"; exit 1; }
+          echo "$CONSOLE_BODY" | grep -q "ManagerLiveMap" || { echo "❌ console page missing map component"; exit 1; }
+          echo "✓ console page renders with map"
+
+          # Overview API
+          echo "Testing GET /api/manager/console/overview..."
+          OV=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" "http://localhost:3000/api/manager/console/overview")
+          OV_STATUS=$(echo "$OV" | grep "HTTP_STATUS:" | cut -d: -f2)
+          OV_BODY=$(echo "$OV" | sed '/HTTP_STATUS:/d')
+          [ "$OV_STATUS" = "200" ] || { echo "❌ overview returned $OV_STATUS"; exit 1; }
+          # Verify required fields (deterministic mock)
+          for FIELD in active_shifts total_shifts unassigned_shifts on_duty en_route idle avg_response_time; do
+            echo "$OV_BODY" | jq -e ".data.$FIELD" > /dev/null || { echo "❌ overview missing field $FIELD"; exit 1; }
+          done
+          echo "✓ overview API OK with all metrics"
+
+          # Locations API (deterministic coordinates)
+          echo "Testing GET /api/agents/locations..."
+          LOC=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" "http://localhost:3000/api/agents/locations")
+          LOC_STATUS=$(echo "$LOC" | grep "HTTP_STATUS:" | cut -d: -f2)
+          LOC_BODY=$(echo "$LOC" | sed '/HTTP_STATUS:/d')
+          [ "$LOC_STATUS" = "200" ] || { echo "❌ locations returned $LOC_STATUS"; exit 1; }
+          # Verify deterministic data
+          COUNT=$(echo "$LOC_BODY" | jq '.data | length')
+          [ "$COUNT" -ge 5 ] || { echo "❌ locations returned too few agents ($COUNT)"; exit 1; }
+          # Second call should return identical data
+          LOC2=$(curl -s "http://localhost:3000/api/agents/locations" -H "Authorization: Bearer $ADMIN_TOKEN" | jq -c '.data')
+          DIFF=$(echo "$LOC_BODY" | jq -c '.data')
+          [ "$LOC2" = "$DIFF" ] || { echo "❌ locations not deterministic"; exit 1; }
+          echo "✓ locations API OK with deterministic data"
+
+          # Assign API (RBAC: admin allowed, agent forbidden)
+          echo "Testing POST /api/manager/console/assign (RBAC)..."
+          # Admin can assign (single mode)
+          ASSIGN=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d '{"mode":"single","assignments":[{"agent_id":"a1","shift_id":"s1"}]}' \
+            "http://localhost:3000/api/manager/console/assign")
+          ASS_STATUS=$(echo "$ASSIGN" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$ASS_STATUS" = "200" ] || { echo "❌ assign (admin) returned $ASS_STATUS"; exit 1; }
+          echo "✓ assign (admin single) OK"
+          # Agent forbidden
+          ASSIGN_AGENT=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $AGENT_TOKEN" -H "Content-Type: application/json" \
+            -d '{"mode":"single","assignments":[{"agent_id":"a2","shift_id":"s2"}]}' \
+            "http://localhost:3000/api/manager/console/assign")
+          ASS_AGENT_STATUS=$(echo "$ASSIGN_AGENT" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$ASS_AGENT_STATUS" = "403" ] || { echo "❌ assign (agent) should be 403, got $ASS_AGENT_STATUS"; exit 1; }
+          echo "✓ assign RBAC enforced (agent forbidden)"
+
+          # Assign API (auto mode with predict)
+          echo "Testing POST /api/manager/console/assign (auto mode)..."
+          AUTO=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d '{"mode":"auto","organization_id":"test-org"}' \
+            "http://localhost:3000/api/manager/console/assign")
+          AUTO_STATUS=$(echo "$AUTO" | grep "HTTP_STATUS:" | cut -d: -f2)
+          AUTO_BODY=$(echo "$AUTO" | sed '/HTTP_STATUS:/d')
+          [ "$AUTO_STATUS" = "200" ] || { echo "❌ assign auto returned $AUTO_STATUS"; exit 1; }
+          # Verify response structure
+          echo "$AUTO_BODY" | jq -e '.success' > /dev/null || { echo "❌ assign auto missing success"; exit 1; }
+          echo "$AUTO_BODY" | jq -e '.count' > /dev/null || { echo "❌ assign auto missing count"; exit 1; }
+          echo "✓ assign auto mode OK"
+
+          # Notify API (broadcast)
+          echo "Testing POST /api/manager/console/notify (broadcast)..."
+          NOTIFY=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d '{"agent_ids":"all","message":"Test broadcast","channel":"push","type":"broadcast"}' \
+            "http://localhost:3000/api/manager/console/notify")
+          NOT_STATUS=$(echo "$NOTIFY" | grep "HTTP_STATUS:" | cut -d: -f2)
+          NOT_BODY=$(echo "$NOTIFY" | sed '/HTTP_STATUS:/d')
+          [ "$NOT_STATUS" = "200" ] || { echo "❌ notify returned $NOT_STATUS"; exit 1; }
+          echo "$NOT_BODY" | jq -e '.success' > /dev/null || { echo "❌ notify missing success"; exit 1; }
+          echo "✓ notify broadcast OK"
+
+          # Predict → Assign flow
+          echo "Testing predict → assign workflow..."
+          PRED=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d '{"shift_id":"test-shift-1","organization_id":"test-org"}' \
+            "http://localhost:3000/api/ai/predict")
+          PRED_STATUS=$(echo "$PRED" | grep "HTTP_STATUS:" | cut -d: -f2)
+          PRED_BODY=$(echo "$PRED" | sed '/HTTP_STATUS:/d')
+          [ "$PRED_STATUS" = "200" ] || { echo "❌ predict returned $PRED_STATUS"; exit 1; }
+          # Extract top candidate
+          TOP_AGENT=$(echo "$PRED_BODY" | jq -r '.data.candidates[0].agent_id')
+          [ -n "$TOP_AGENT" ] && [ "$TOP_AGENT" != "null" ] || { echo "❌ predict returned no candidates"; exit 1; }
+          echo "✓ predict OK, top agent: $TOP_AGENT"
+          # Assign using top candidate
+          FLOW=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"mode\":\"single\",\"assignments\":[{\"agent_id\":\"$TOP_AGENT\",\"shift_id\":\"test-shift-1\"}]}" \
+            "http://localhost:3000/api/manager/console/assign")
+          FLOW_STATUS=$(echo "$FLOW" | grep "HTTP_STATUS:" | cut -d: -f2)
+          [ "$FLOW_STATUS" = "200" ] || { echo "❌ predict→assign flow returned $FLOW_STATUS"; exit 1; }
+          echo "✓ predict→assign workflow OK"
+
+          # Determinism check: second auto-assign should produce same count
+          echo "Testing assign auto determinism..."
+          AUTO2=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+            -d '{"mode":"auto","organization_id":"test-org"}' \
+            "http://localhost:3000/api/manager/console/assign")
+          AUTO2_BODY=$(echo "$AUTO2" | sed '/HTTP_STATUS:/d')
+          COUNT1=$(echo "$AUTO_BODY" | jq -r '.count')
+          COUNT2=$(echo "$AUTO2_BODY" | jq -r '.count')
+          [ "$COUNT1" = "$COUNT2" ] || { echo "❌ auto-assign not deterministic (count $COUNT1 vs $COUNT2)"; exit 1; }
+          echo "✓ auto-assign deterministic"
+
+          echo "✅ Stage 27 Manager Command Center & Auto-Assign passed"
