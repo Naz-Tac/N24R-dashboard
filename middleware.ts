@@ -51,9 +51,13 @@ function checkAccess(path: string, role: string | undefined) {
     path.startsWith('/settings') ||
     path.startsWith('/analytics')
   ) {
-    // Analytics should be limited to admin and manager (not agents)
-    if (path.startsWith('/analytics')) {
+    // AI Analytics: admin and manager only
+    if (path.startsWith('/analytics/ai')) {
       return role === 'admin' || role === 'manager';
+    }
+    // General analytics: admin, manager, dispatcher
+    if (path.startsWith('/analytics')) {
+      return role === 'admin' || role === 'manager' || role === 'dispatcher';
     }
     return role === 'admin' || role === 'dispatcher';
   }
@@ -133,7 +137,7 @@ export const config = {
     '/settings/:path*',
     '/availability',
     '/agent/:path*',
-    '/analytics',
+    '/analytics/:path*',
      '/org/:path*',
     '/api/:path*',
   ],

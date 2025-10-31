@@ -1147,6 +1147,65 @@ jobs:
           fi
           echo "✅ Unauthorized properly blocked"
 
+      - name: Stage 21 – AI Usage Analytics & Insights
+        env:
+          AI_ANALYTICS_MOCK: '1'
+        run: |
+          echo "📊 Stage 21: AI Usage Analytics & Insights Dashboard"
+
+          echo "→ Test GET /api/analytics/ai/summary"
+          SUMMARY_CODE=$(curl -s -w "\n%{http_code}" -X GET "http://localhost:3000/api/analytics/ai/summary" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" | tee summary.json | tail -n1)
+          if [ "$SUMMARY_CODE" != "200" ]; then echo "❌ Summary endpoint failed ($SUMMARY_CODE)"; exit 1; fi
+          
+          # Validate summary keys
+          if ! grep -q '"total_interactions"' summary.json; then echo "❌ Missing total_interactions"; exit 1; fi
+          if ! grep -q '"unique_users"' summary.json; then echo "❌ Missing unique_users"; exit 1; fi
+          if ! grep -q '"avg_response_time"' summary.json; then echo "❌ Missing avg_response_time"; exit 1; fi
+          if ! grep -q '"action_success_rate"' summary.json; then echo "❌ Missing action_success_rate"; exit 1; fi
+          if ! grep -q '"top_intent"' summary.json; then echo "❌ Missing top_intent"; exit 1; fi
+          echo "✅ Summary endpoint validated"
+
+          echo "→ Test GET /api/analytics/ai/timeseries"
+          TS_CODE=$(curl -s -w "\n%{http_code}" -X GET "http://localhost:3000/api/analytics/ai/timeseries" \
+            -H "Authorization: Bearer ${M_TOKEN}" | tee timeseries.json | tail -n1)
+          if [ "$TS_CODE" != "200" ]; then echo "❌ Timeseries endpoint failed ($TS_CODE)"; exit 1; fi
+          
+          # Validate timeseries arrays
+          if ! grep -q '"dates"' timeseries.json; then echo "❌ Missing dates array"; exit 1; fi
+          if ! grep -q '"interactions"' timeseries.json; then echo "❌ Missing interactions array"; exit 1; fi
+          if ! grep -q '"successes"' timeseries.json; then echo "❌ Missing successes array"; exit 1; fi
+          if ! grep -q '"failures"' timeseries.json; then echo "❌ Missing failures array"; exit 1; fi
+          echo "✅ Timeseries endpoint validated"
+
+          echo "→ Test GET /api/analytics/ai/intents"
+          INTENTS_CODE=$(curl -s -w "\n%{http_code}" -X GET "http://localhost:3000/api/analytics/ai/intents" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" | tee intents.json | tail -n1)
+          if [ "$INTENTS_CODE" != "200" ]; then echo "❌ Intents endpoint failed ($INTENTS_CODE)"; exit 1; fi
+          
+          # Validate intent ranking structure
+          if ! grep -q '"intent"' intents.json; then echo "❌ Missing intent field"; exit 1; fi
+          if ! grep -q '"count"' intents.json; then echo "❌ Missing count field"; exit 1; fi
+          if ! grep -q '"percentage"' intents.json; then echo "❌ Missing percentage field"; exit 1; fi
+          echo "✅ Intents endpoint validated"
+
+          echo "→ Test RBAC: agent cannot access AI analytics summary"
+          AGENT_BLOCKED=$(curl -s -o /dev/null -w "%{http_code}" -X GET "http://localhost:3000/api/analytics/ai/summary" \
+            -H "Authorization: Bearer ${AGENT_TOKEN}")
+          if [ "$AGENT_BLOCKED" = "200" ]; then
+            echo "❌ Agent should be forbidden from AI analytics summary"
+            exit 1
+          fi
+          echo "✅ Agent properly blocked from AI analytics (got $AGENT_BLOCKED)"
+
+          echo "→ Test dashboard page render"
+          PAGE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "http://localhost:3000/analytics/ai" \
+            -H "Cookie: $(cat admin.cookies)")
+          if [ "$PAGE_CODE" != "200" ]; then echo "❌ Dashboard page failed ($PAGE_CODE)"; exit 1; fi
+          echo "✅ Dashboard page renders successfully"
+
+          echo "✅ Stage 21 AI Usage Analytics passed"
+
       - name: Run API integration tests
         env:
           AUTH_TOKEN: ${{ env.AGENT_TOKEN }}
